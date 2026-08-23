@@ -51,17 +51,19 @@ Verify all of the following before continuing:
   targets.
 - The adjacent SHA-256 file validates.
 
-## 4. Build the Community archive
+## 4. Optionally build a Community archive
 
 ```bash
 npm run package:community -- \
   --audio-pkg dist/release/MeetronAudio-AUDIO_VERSION.pkg
 ```
 
-The packager refuses a dirty worktree unless `--allow-dirty` is supplied for a
-local test. That override adds `LOCAL-TEST` to the file and root-directory name
-so it cannot be confused with a release artifact. Public releases must not use
-that override. Validate the generated ZIP and its adjacent SHA-256 file.
+The public source is available from Git clone and GitHub's standard Download
+ZIP, so a dedicated Community archive is optional. The packager is useful for
+offline transfer or for bundling the audio PKG with the source. It refuses a
+dirty worktree unless `--allow-dirty` is supplied for a local test. That
+override adds `LOCAL-TEST` to the file and root-directory name so it cannot be
+confused with a release artifact. Never publish a `LOCAL-TEST` artifact.
 
 ## 5. Test the distributed files
 
@@ -70,7 +72,7 @@ upgrade from the latest public version.
 
 - Confirm Gatekeeper accepts the audio PKG.
 - Confirm source-distributed `.command` files accurately follow the documented
-  Gatekeeper exception flow when the archive is quarantined.
+  Gatekeeper exception flow when a downloaded source directory is quarantined.
 - Confirm a working BlackHole installation is preserved and does not trigger
   Meetron Audio installation.
 - Confirm an older Meetron Audio receipt triggers only the required PKG update.
@@ -82,8 +84,9 @@ upgrade from the latest public version.
 
 1. Create an annotated SemVer tag.
 2. Create a GitHub Release from that tag.
-3. Attach the Community ZIP, its SHA-256 file, the notarized audio PKG, and its
-   SHA-256 file.
+3. Attach the notarized audio PKG and its SHA-256 file. If a dedicated Community
+   ZIP is published, attach its SHA-256 file as well and verify that neither
+   filename contains `LOCAL-TEST`.
 4. Copy the matching CHANGELOG section into the release notes and clearly mark
    beta features and best-effort platforms.
 5. Do not move or replace assets after publication; publish a new patch version.

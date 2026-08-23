@@ -5,6 +5,8 @@ user-visible changes; implementation-only refactors stay in Git history.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-24
+
 ### Added
 
 - Zoom Web App beta support with invitation URL detection, browser join,
@@ -61,6 +63,7 @@ user-visible changes; implementation-only refactors stay in Git history.
 - Initial self-hosted Meetron Audio driver and native Core Audio controller.
 - Required aggregate CI check for supported macOS runners.
 
-[Unreleased]: https://github.com/bb8ad8/meetron/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/bb8ad8/meetron/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/bb8ad8/meetron/releases/tag/v0.9.0
 [0.8.1]: https://github.com/bb8ad8/meetron/releases/tag/v0.8.1
 [0.8.0]: https://github.com/bb8ad8/meetron/releases/tag/v0.8.0
