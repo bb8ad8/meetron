@@ -16,6 +16,15 @@ const previousButton = document.querySelector("[data-previous-step]");
 const nextButton = document.querySelector("[data-next-step]");
 const setupNav = document.querySelector(".setup-nav");
 const bootstrapCommand = document.querySelector("[data-bootstrap-command]");
+const meetingUrlLabel = document.querySelector("[data-meeting-url-label]");
+const providerButtons = [...document.querySelectorAll("[data-provider]")];
+const providerGuides = [...document.querySelectorAll("[data-provider-guide]")];
+const sessionControls = document.querySelector("[data-session-controls]");
+const sessionProvider = document.querySelector("[data-session-provider]");
+const sessionConnection = document.querySelector("[data-session-connection]");
+const sessionMicButton = document.querySelector("[data-session-mic]");
+const sessionVoiceButton = document.querySelector("[data-session-voice]");
+const sessionStopButton = document.querySelector("[data-session-stop]");
 
 const extensionRuntime = globalThis.chrome?.runtime;
 const extensionStorage = globalThis.chrome?.storage;
@@ -24,39 +33,48 @@ const extensionEnvironmentReady =
   typeof extensionStorage?.local?.get === "function";
 const extensionId = extensionRuntime?.id || "jlikakgdldiihhflkobhnpfegjlcakdd";
 const automaticBootstrapCommand =
-  `EXTENSION_DIR="$(for p in "$HOME/Library/Application Support/Google/Chrome"/*/"Secure Preferences"; do /usr/bin/plutil -extract extensions.settings.${extensionId}.path raw "$p" 2>/dev/null && break; done)" && REPO_DIR="$(dirname "$EXTENSION_DIR")" && cd "$REPO_DIR" && npm install && ./scripts/open-control-ui-setup.sh`;
+  `EXTENSION_DIR="$(for p in "$HOME/Library/Application Support/Google/Chrome"/*/"Secure Preferences"; do /usr/bin/plutil -extract extensions.settings.${extensionId}.path raw "$p" 2>/dev/null && break; done)" && REPO_DIR="$(dirname "$EXTENSION_DIR")" && cd "$REPO_DIR" && npm ci && ./scripts/open-control-ui-setup.sh`;
 bootstrapCommand.textContent = automaticBootstrapCommand;
 
 let setupStatus = null;
 let setupStep = 0;
 let forceSetup = false;
 let setupBusy = false;
+let selectedProvider = "google-meet";
+let sessionBusy = false;
+let inputValidationTimer = null;
+let inputValidationSequence = 0;
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
-function normalizeMeetingUrl(value) {
-  let url;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    return null;
+function renderProvider() {
+  const zoom = selectedProvider === "zoom-web";
+  for (const button of providerButtons) {
+    const selected = button.dataset.provider === selectedProvider;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-checked", String(selected));
   }
-
-  if (
-    url.protocol !== "https:" ||
-    url.hostname !== "meet.google.com" ||
-    url.port ||
-    url.username ||
-    url.password ||
-    !/^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/i.test(url.pathname)
-  ) {
-    return null;
+  for (const guide of providerGuides) {
+    guide.hidden = guide.dataset.providerGuide !== selectedProvider;
   }
+  meetingUrlLabel.textContent = zoom ? "Zoom招待URL" : "Google Meet URL";
+  meetingInput.placeholder = zoom
+    ? "https://zoom.us/j/123456789?pwd=..."
+    : "https://meet.google.com/xxx-xxxx-xxx";
+}
 
-  url.hash = "";
-  return url.toString();
+function selectProvider(providerId, { announce = false } = {}) {
+  selectedProvider = providerId === "zoom-web" ? "zoom-web" : "google-meet";
+  renderProvider();
+  if (announce) {
+    setMessage(
+      selectedProvider === "zoom-web"
+        ? "Zoomは任意のベータ機能です。参加準備を自動で行います"
+        : "Meet URLを入力すると参加準備を自動で行います",
+    );
+  }
 }
 
 async function nativeRequest(type, payload = {}) {
@@ -102,12 +120,45 @@ function renderLaunch(state) {
   launchStatus.textContent = labels[state.status] || state.status;
 }
 
+function renderSessionControls(status) {
+  const launchState = status?.meetingLaunch;
+  const meeting = status?.dedicatedMeeting || status?.dedicatedMeet || {};
+  const providerId = launchState?.providerId || meeting.providerId || "google-meet";
+  const active = Boolean(
+    launchState && !new Set(["failed", "stopped"]).has(launchState.status),
+  );
+  sessionControls.hidden = !active;
+  if (!active) return;
+
+  sessionProvider.textContent = providerId === "zoom-web" ? "Zoom GPT参加者" : "Google Meet GPT参加者";
+  const zoomAudioPending =
+    providerId === "zoom-web" &&
+    meeting.connection === "joined" &&
+    meeting.audioConnection !== "connected";
+  const labels = {
+    joined: zoomAudioPending
+      ? "参加中・音声接続待ち"
+      : meeting.microphone === "muted" ? "参加中・ミュート" : "参加中・送話中",
+    waiting: "ホストの許可待ち",
+    prejoin: "参加前",
+    rejected: "参加できません",
+    "not-running": launchState.status === "completed" ? "専用Chromeを確認" : "起動中",
+  };
+  sessionConnection.textContent = labels[meeting.connection] || "状態確認中";
+  const microphoneKnown = new Set(["muted", "unmuted"]).has(meeting.microphone);
+  sessionMicButton.textContent = meeting.microphone === "muted" ? "ミュート解除" : "ミュート";
+  sessionMicButton.disabled = sessionBusy || meeting.connection !== "joined" || !microphoneKnown;
+  sessionVoiceButton.disabled = sessionBusy;
+  sessionStopButton.disabled = sessionBusy;
+}
+
 async function waitForLaunchCompletion(timeout = 150_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    const status = await nativeRequest("status.get");
+    const status = await nativeRequest("session.status.get");
     const state = status.meetingLaunch;
     renderLaunch(state);
+    renderSessionControls(status);
     if (state?.status === "completed") return state;
     if (state?.status === "failed") {
       throw new Error(state.error || "起動処理に失敗しました");
@@ -189,7 +240,7 @@ function renderSetup() {
   bootstrap.hidden = connected;
   if (connected && setupStatus.repoRoot) {
     bootstrapCommand.textContent =
-      `cd ${shellQuote(setupStatus.repoRoot)} && npm install && ./scripts/open-control-ui-setup.sh`;
+      `cd ${shellQuote(setupStatus.repoRoot)} && npm ci && ./scripts/open-control-ui-setup.sh`;
   } else {
     bootstrapCommand.textContent = automaticBootstrapCommand;
   }
@@ -215,6 +266,13 @@ function renderSetup() {
   );
   document.querySelector("[data-configure-audio]").disabled =
     !setupStatus?.audio?.devicesReady || setupBusy;
+  const routing = setupStatus?.audio?.routing;
+  if (routing?.meetingMicrophone?.name) {
+    document.querySelector("[data-zoom-microphone]").textContent = routing.meetingMicrophone.name;
+  }
+  if (routing?.meetingSpeaker?.name) {
+    document.querySelector("[data-zoom-speaker]").textContent = routing.meetingSpeaker.name;
+  }
 
   if (!projectInput.dataset.edited && setupStatus?.project?.url) {
     projectInput.value = setupStatus.project.url;
@@ -250,8 +308,9 @@ async function refresh({ preserveStep = false } = {}) {
 
     if (setupStatus.complete && !forceSetup) {
       showLaunchView();
-      const status = await nativeRequest("status.get");
+      const status = await nativeRequest("session.status.get");
       renderLaunch(status.meetingLaunch);
+      renderSessionControls(status);
     } else {
       renderSetup();
     }
@@ -285,25 +344,34 @@ async function runSetupAction(button, type, payload, pendingText, successText) {
 
 startForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const meetingUrl = normalizeMeetingUrl(meetingInput.value);
-  meetingInput.classList.toggle("invalid", !meetingUrl);
-  if (!meetingUrl) {
-    setMessage("有効なGoogle Meet URLを入力してください", "error");
-    meetingInput.focus();
-    return;
-  }
-
   startButton.disabled = true;
   meetingInput.disabled = true;
   setMessage("起動処理を開始しています");
   try {
-    const result = await nativeRequest("meeting.start", { meetingUrl });
-    await chrome.storage.local.set({ lastMeetingUrl: meetingUrl });
+    const meetingUrl = meetingInput.value.trim();
+    const meeting = await nativeRequest("meeting.validate", { meetingUrl });
+    meetingInput.classList.remove("invalid");
+    selectProvider(meeting.providerId);
+    const result = await nativeRequest("session.start", { meetingUrl });
+    await chrome.storage.local.set({
+      lastMeetingUrl: meeting.providerId === "google-meet" ? meeting.displayUrl : "",
+    });
     renderLaunch(result);
-    setMessage("起動処理中です。専用Chromeを準備しています");
+    setMessage(
+      meeting.providerId === "zoom-web"
+        ? "専用ChromeでZoomとChatGPT Voiceを開いています"
+        : "起動処理中です。専用Chromeを準備しています",
+    );
     await waitForLaunchCompletion();
-    setMessage("開始しました。専用ChromeがMeetを開きました", "success");
+    setMessage(
+      meeting.providerId === "zoom-web"
+        ? "Zoomの参加準備が完了しました。ホストの許可後もミュートで待機します"
+        : "開始しました。専用ChromeがMeetを開きました",
+      "success",
+    );
   } catch (error) {
+    meetingInput.classList.add("invalid");
+    meetingInput.focus();
     setMessage(error.message, "error");
   } finally {
     startButton.disabled = false;
@@ -311,7 +379,60 @@ startForm.addEventListener("submit", async (event) => {
   }
 });
 
-meetingInput.addEventListener("input", () => meetingInput.classList.remove("invalid"));
+meetingInput.addEventListener("input", () => {
+  meetingInput.classList.remove("invalid");
+  clearTimeout(inputValidationTimer);
+  const sequence = ++inputValidationSequence;
+  const meetingUrl = meetingInput.value.trim();
+  if (!meetingUrl) return;
+  inputValidationTimer = setTimeout(async () => {
+    try {
+      const meeting = await nativeRequest("meeting.validate", { meetingUrl });
+      if (sequence === inputValidationSequence && meeting.providerId !== selectedProvider) {
+        selectProvider(meeting.providerId);
+      }
+    } catch {
+      // Submit remains authoritative and presents the provider-owned error.
+    }
+  }, 250);
+});
+for (const button of providerButtons) {
+  button.addEventListener("click", () => selectProvider(button.dataset.provider, { announce: true }));
+}
+
+async function runSessionAction(type, pendingText, successText) {
+  sessionBusy = true;
+  sessionMicButton.disabled = true;
+  sessionVoiceButton.disabled = true;
+  sessionStopButton.disabled = true;
+  setMessage(pendingText);
+  try {
+    const result = await nativeRequest(type);
+    if (result?.verified === false) {
+      throw new Error("操作後の状態を確認できませんでした");
+    }
+    setMessage(successText, "success");
+    const status = await nativeRequest("session.status.get");
+    renderLaunch(status.meetingLaunch);
+    renderSessionControls(status);
+  } catch (error) {
+    setMessage(error.message, "error");
+  } finally {
+    sessionBusy = false;
+    const status = await nativeRequest("session.status.get").catch(() => null);
+    if (status) renderSessionControls(status);
+  }
+}
+
+sessionMicButton.addEventListener("click", () =>
+  runSessionAction("participant.mic.toggle", "マイクを切り替えています", "マイクを切り替えました"),
+);
+sessionVoiceButton.addEventListener("click", () =>
+  runSessionAction("voice.restart", "Voiceを再起動しています", "Voiceを再起動しました"),
+);
+sessionStopButton.addEventListener("click", () =>
+  runSessionAction("session.stop", "セッションを終了しています", "セッションを終了しました"),
+);
 projectInput.addEventListener("input", () => {
   projectInput.dataset.edited = "true";
   projectInput.classList.remove("invalid");
@@ -420,8 +541,10 @@ document.querySelector("[data-finish-setup]").addEventListener("click", async ()
 
 if (extensionEnvironmentReady) {
   extensionStorage.local.get(["lastMeetingUrl"]).then(({ lastMeetingUrl }) => {
+    selectProvider("google-meet");
     if (lastMeetingUrl) meetingInput.value = lastMeetingUrl;
   });
+  renderProvider();
   refresh();
 } else {
   forceSetup = true;

@@ -34,6 +34,12 @@ else
   fail 'bash syntax: Meetron Setup.command'
 fi
 
+if bash -n "$repo_root/Meetron Update.command"; then
+  pass 'bash syntax: Meetron Update.command'
+else
+  fail 'bash syntax: Meetron Update.command'
+fi
+
 if "$repo_root/scripts/check-env.sh" --help >/dev/null; then
   pass 'check-env help'
 else
@@ -44,6 +50,50 @@ if "$repo_root/scripts/setup-meetron.sh" --help >/dev/null; then
   pass 'Meetron setup help'
 else
   fail 'Meetron setup help'
+fi
+
+if "$repo_root/scripts/update-meetron.sh" --help >/dev/null; then
+  pass 'Meetron updater help'
+else
+  fail 'Meetron updater help'
+fi
+
+if "$repo_root/scripts/package-community-release.sh" --help >/dev/null; then
+  pass 'Community release packager help'
+else
+  fail 'Community release packager help'
+fi
+
+if node "$repo_root/scripts/check-dco.mjs" --help >/dev/null; then
+  pass 'DCO checker help'
+else
+  fail 'DCO checker help'
+fi
+
+community_output="$temp_dir/community-release"
+community_output_repeat="$temp_dir/community-release-repeat"
+if "$repo_root/scripts/package-community-release.sh" \
+  --allow-dirty --output-dir "$community_output" >/dev/null &&
+  "$repo_root/scripts/package-community-release.sh" \
+    --allow-dirty --output-dir "$community_output_repeat" >/dev/null; then
+  community_version="$(node -p 'require(process.argv[1]).version' "$repo_root/package.json")"
+  community_archive="$community_output/Meetron-$community_version-Community-LOCAL-TEST.zip"
+  community_archive_repeat="$community_output_repeat/Meetron-$community_version-Community-LOCAL-TEST.zip"
+  community_entries="$(unzip -Z1 "$community_archive")"
+  if (
+    cd "$community_output"
+    shasum -a 256 -c "$(basename "$community_archive").sha256" >/dev/null
+  ) &&
+    cmp -s "$community_archive" "$community_archive_repeat" &&
+    printf '%s\n' "$community_entries" | grep -F "Meetron-$community_version-Community-LOCAL-TEST/Meetron Update.command" >/dev/null &&
+    printf '%s\n' "$community_entries" | grep -F "Meetron-$community_version-Community-LOCAL-TEST/scripts/package-community-release.sh" >/dev/null &&
+    ! printf '%s\n' "$community_entries" | grep -E '(^|/)(\.git|node_modules|docs|dist|\.meeting-copilot-runtime)(/|$)|(^|/)\.meeting-copilot\.env$|(^|/)\._' >/dev/null; then
+    pass 'Community archive is reproducible and excludes local state'
+  else
+    fail 'Community archive is reproducible and excludes local state'
+  fi
+else
+  fail 'Community release packager creates a source archive'
 fi
 
 if release_guard_output="$(MEETRON_RELEASE_BUILD=1 \
@@ -66,7 +116,13 @@ touch "$fake_setup_pkg"
 cat > "$fake_setup_bin/pkgutil" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
-  --pkg-info) exit 1 ;;
+  --pkg-info)
+    if [ -n "${FAKE_INSTALLED_AUDIO_VERSION:-}" ]; then
+      printf 'package-id: io.github.bb8ad8.meetron.audio.pkg\nversion: %s\n' "$FAKE_INSTALLED_AUDIO_VERSION"
+      exit 0
+    fi
+    exit 1
+    ;;
   --check-signature)
     cat <<'SIGNATURE'
 Status: signed by a developer certificate issued by Apple for distribution
@@ -96,6 +152,38 @@ else
   else
     fail 'Meetron setup verifies and locates a downloaded PKG'
   fi
+fi
+
+if setup_upgrade_output="$(PATH="$fake_setup_bin:/usr/bin:/bin" \
+  FAKE_INSTALLED_AUDIO_VERSION=0.1.1 \
+  MEETRON_SETUP_AUDIO_VERSION=0.1.2 \
+  MEETRON_SETUP_PKG_PATH="$fake_setup_pkg" \
+  MEETRON_SETUP_NO_OPEN=1 \
+  "$repo_root/scripts/setup-meetron.sh" --check-only 2>&1)"; then
+  fail 'Meetron setup pauses for an audio PKG upgrade'
+else
+  setup_status=$?
+  if [ "$setup_status" -eq 20 ] &&
+    printf '%s\n' "$setup_upgrade_output" | grep -F '[UPDATE] Meetron Audio 0.1.2 is required (installed: 0.1.1).' >/dev/null &&
+    printf '%s\n' "$setup_upgrade_output" | grep -F 'PKGの署名と公証を確認しました' >/dev/null &&
+    ! printf '%s\n' "$setup_upgrade_output" | grep -F 'awk:' >/dev/null; then
+    pass 'Meetron setup upgrades an older audio PKG'
+  else
+    fail 'Meetron setup upgrades an older audio PKG'
+  fi
+fi
+
+setup_current_output="$(PATH="$fake_setup_bin:/usr/bin:/bin" \
+  FAKE_INSTALLED_AUDIO_VERSION=0.1.2 \
+  MEETRON_SETUP_AUDIO_VERSION=0.1.2 \
+  MEETRON_SETUP_NO_OPEN=1 \
+  "$repo_root/scripts/setup-meetron.sh" --check-only 2>&1 || true)"
+if printf '%s\n' "$setup_current_output" | grep -F '[OK] Meetron Audio PKG is installed (0.1.2).' >/dev/null &&
+  ! printf '%s\n' "$setup_current_output" | grep -F '[UPDATE]' >/dev/null &&
+  ! printf '%s\n' "$setup_current_output" | grep -F 'awk:' >/dev/null; then
+  pass 'Meetron setup accepts the current audio PKG'
+else
+  fail 'Meetron setup accepts the current audio PKG'
 fi
 
 if setup_download_output="$(PATH="$fake_setup_bin:/usr/bin:/bin" \
@@ -272,6 +360,12 @@ else
   fail 'Meet preparation help'
 fi
 
+if node "$repo_root/scripts/prepare-zoom.mjs" --help >/dev/null; then
+  pass 'Zoom preparation help'
+else
+  fail 'Zoom preparation help'
+fi
+
 if node "$repo_root/scripts/prepare-chatgpt-live.mjs" --help >/dev/null; then
   pass 'ChatGPT Voice preparation help'
 else
@@ -324,7 +418,18 @@ else
   fail 'Native Host Chrome PATH compatibility'
 fi
 
-for javascript in "$repo_root"/extension/*.js "$repo_root"/scripts/*.mjs "$repo_root"/tests/*.mjs; do
+for javascript in \
+  "$repo_root"/extension/*.js \
+  "$repo_root"/scripts/*.mjs \
+  "$repo_root"/src/audio/*.mjs \
+  "$repo_root"/src/browser/*.mjs \
+  "$repo_root"/src/core/*.mjs \
+  "$repo_root"/src/platform/*.mjs \
+  "$repo_root"/src/platform/macos/*.mjs \
+  "$repo_root"/src/providers/*.mjs \
+  "$repo_root"/src/providers/google-meet/*.mjs \
+  "$repo_root"/src/providers/zoom-web/*.mjs \
+  "$repo_root"/tests/*.mjs; do
   if node --check "$javascript"; then
     pass "JavaScript syntax: ${javascript##*/}"
   else
@@ -354,10 +459,64 @@ else
   fail 'Native Host protocol ping'
 fi
 
+if node "$repo_root/tests/protocol-test.mjs" >/dev/null; then
+  pass 'versioned local protocol compatibility'
+else
+  fail 'versioned local protocol compatibility'
+fi
+
+if node "$repo_root/tests/session-state-test.mjs" >/dev/null; then
+  pass 'session identity and stale writer protection'
+else
+  fail 'session identity and stale writer protection'
+fi
+
+if node "$repo_root/tests/session-orchestrator-test.mjs" >/dev/null; then
+  pass 'shared session lifecycle orchestration'
+else
+  fail 'shared session lifecycle orchestration'
+fi
+
+if node "$repo_root/tests/platform-contract-test.mjs" >/dev/null; then
+  pass 'platform adapter contract and macOS path isolation'
+else
+  fail 'platform adapter contract and macOS path isolation'
+fi
+
+if node "$repo_root/tests/dco-test.mjs" >/dev/null; then
+  pass 'DCO signed commit enforcement'
+else
+  fail 'DCO signed commit enforcement'
+fi
+
+if node "$repo_root/tests/provider-contract-test.mjs" >/dev/null; then
+  pass 'meeting provider registry and URL validation'
+else
+  fail 'meeting provider registry and URL validation'
+fi
+
+if node "$repo_root/tests/preparation-contract-test.mjs" >/dev/null; then
+  pass 'shared preparation contracts'
+else
+  fail 'shared preparation contracts'
+fi
+
+if node "$repo_root/tests/launch-secret-transport-test.mjs" >/dev/null; then
+  pass 'meeting invitation secret transport'
+else
+  fail 'meeting invitation secret transport'
+fi
+
 if node "$repo_root/tests/audio-backend-test.mjs" >/dev/null; then
   pass 'audio backend selection and route isolation'
 else
   fail 'audio backend selection and route isolation'
+fi
+
+if node "$repo_root/tests/updater-test.mjs" >/dev/null; then
+  pass 'one-click updater migration and BlackHole compatibility'
+else
+  fail 'one-click updater migration and BlackHole compatibility'
 fi
 
 if node "$repo_root/tests/session-cancel-test.mjs" >/dev/null; then
@@ -376,6 +535,12 @@ if node "$repo_root/tests/playwright-cdp-test.mjs" >/dev/null; then
   pass 'Playwright CDP compatibility defaults'
 else
   fail 'Playwright CDP compatibility defaults'
+fi
+
+if node "$repo_root/tests/meeting-browser-test.mjs" >/dev/null; then
+  pass 'shared meeting browser interactions'
+else
+  fail 'shared meeting browser interactions'
 fi
 
 if [ "${MEETING_COPILOT_SKIP_BROWSER_TEST:-0}" = "1" ]; then
@@ -401,6 +566,16 @@ elif [ -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' ]; then
   else
     fail 'Meet camera state handling'
   fi
+  if node "$repo_root/tests/zoom-web-provider-test.mjs" >/dev/null; then
+    pass 'Zoom Web status, microphone, redaction, and leave handling'
+  else
+    fail 'Zoom Web provider handling'
+  fi
+  if node "$repo_root/tests/prepare-zoom-test.mjs" >/dev/null; then
+    pass 'Zoom mixed-language preparation and audio routing'
+  else
+    fail 'Zoom preparation and audio routing'
+  fi
 else
   pass 'extension panel and popup UI browser test (skipped: Chrome not installed)'
 fi
@@ -424,6 +599,20 @@ if printf '%s\n' "$launcher_output" | grep -F -- '--user-data-dir=' >/dev/null; 
   pass 'Meet launcher dry run'
 else
   fail 'Meet launcher dry run'
+fi
+
+zoom_launcher_output="$(MEETING_COPILOT_CHROME_PATH="$fake_chrome" \
+  MEETING_COPILOT_PROFILE_DIR="$temp_dir/profile" \
+  "$repo_root/scripts/open-gpt-participant.sh" --dry-run \
+  'https://us02web.zoom.us/j/12345678901?pwd=secret')"
+if printf '%s\n' "$zoom_launcher_output" | grep -F -- 'Provider:     Zoom Web App' >/dev/null &&
+  printf '%s\n' "$zoom_launcher_output" | grep -F -- '--user-data-dir=' >/dev/null &&
+  printf '%s\n' "$zoom_launcher_output" | grep -F -- 'about:blank' >/dev/null &&
+  ! printf '%s\n' "$zoom_launcher_output" | grep -F -- 'us02web.zoom.us/j/' >/dev/null &&
+  ! printf '%s\n' "$zoom_launcher_output" | grep -F -- 'secret' >/dev/null; then
+  pass 'Zoom Web launcher dry run without passcode logging'
+else
+  fail 'Zoom Web launcher dry run without passcode logging'
 fi
 
 auto_launcher_output="$(MEETING_COPILOT_CHROME_PATH="$fake_chrome" \

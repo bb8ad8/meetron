@@ -1,10 +1,14 @@
 const HOST_NAME = "com.meeting_copilot.host";
+const PROTOCOL_VERSION = 1;
 const pending = new Map();
 let nativePort = null;
 let requestSequence = 0;
 const CONTENT_REQUESTS = new Set([
   "status.get",
+  "session.status.get",
+  "session.reconcile",
   "meet.mic.toggle",
+  "participant.mic.toggle",
   "voice.restart",
   "session.stop",
   "diagnostics.run",
@@ -26,11 +30,14 @@ function senderMayRequest(sender, requestType) {
     return true;
   }
 
-  return (
+  const isMeet =
     url.origin === "https://meet.google.com" &&
-    /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\/)?$/i.test(url.pathname) &&
-    CONTENT_REQUESTS.has(requestType)
-  );
+    /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\/)?$/i.test(url.pathname);
+  const isZoom =
+    url.protocol === "https:" &&
+    (url.hostname === "zoom.us" || url.hostname.endsWith(".zoom.us")) &&
+    /^\/wc\/\d+\/(?:join|start)(?:\/)?$/i.test(url.pathname);
+  return (isMeet || isZoom) && CONTENT_REQUESTS.has(requestType);
 }
 
 function rejectPending(message) {
@@ -50,12 +57,13 @@ function connectHost() {
   nativePort = port;
 
   port.onMessage.addListener((message) => {
-    const entry = pending.get(message.id);
+    const responseId = message.requestId || message.id;
+    const entry = pending.get(responseId);
     if (!entry) {
       return;
     }
     clearTimeout(entry.timeout);
-    pending.delete(message.id);
+    pending.delete(responseId);
     entry.resolve(message);
   });
 
@@ -85,7 +93,12 @@ function requestHost(request) {
 
     pending.set(id, { resolve, reject, timeout });
     try {
-      connectHost().postMessage({ ...request, id });
+      connectHost().postMessage({
+        ...request,
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: id,
+        id,
+      });
     } catch (error) {
       clearTimeout(timeout);
       pending.delete(id);

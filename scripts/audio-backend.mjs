@@ -5,41 +5,42 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { defineAudioBackend } from "../src/audio/audio-backend-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = resolve(repoRoot, ".meeting-copilot.env");
 
 export const AUDIO_BACKENDS = Object.freeze({
-  custom: Object.freeze({
+  custom: defineAudioBackend({
     id: "custom",
     label: "Meetron Audio",
-    meetingToAI: Object.freeze({
+    meetingToAI: {
       name: "Meetron: Meeting to AI",
       uid: "io.github.bb8ad8.meetron.audio.meeting-to-ai.device",
-    }),
-    aiToMeeting: Object.freeze({
+    },
+    aiToMeeting: {
       name: "Meetron: AI to Meeting",
       uid: "io.github.bb8ad8.meetron.audio.ai-to-meeting.device",
-    }),
+    },
   }),
-  legacyCustom: Object.freeze({
+  legacyCustom: defineAudioBackend({
     id: "legacy-custom",
     label: "Meeting Copilot Audio (legacy)",
-    meetingToAI: Object.freeze({
+    meetingToAI: {
       name: "Meeting Copilot: Meeting to AI",
       uid: "dev.meetingcopilot.audio.meeting-to-ai.device",
-    }),
-    aiToMeeting: Object.freeze({
+    },
+    aiToMeeting: {
       name: "Meeting Copilot: AI to Meeting",
       uid: "dev.meetingcopilot.audio.ai-to-meeting.device",
-    }),
+    },
   }),
-  blackhole: Object.freeze({
+  blackhole: defineAudioBackend({
     id: "blackhole",
     label: "BlackHole (legacy)",
-    meetingToAI: Object.freeze({ name: "BlackHole 2ch", uid: "BlackHole2ch_UID" }),
-    aiToMeeting: Object.freeze({ name: "BlackHole 16ch", uid: "BlackHole16ch_UID" }),
+    meetingToAI: { name: "BlackHole 2ch", uid: "BlackHole2ch_UID" },
+    aiToMeeting: { name: "BlackHole 16ch", uid: "BlackHole16ch_UID" },
   }),
 });
 

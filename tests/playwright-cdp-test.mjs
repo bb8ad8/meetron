@@ -20,7 +20,8 @@ const productionScripts = [
   "open-chrome-page.mjs",
   "prepare-chatgpt-live.mjs",
   "prepare-meet.mjs",
-  "set-meet-mic.mjs",
+  "prepare-zoom.mjs",
+  "set-participant-mic.mjs",
 ];
 
 for (const script of productionScripts) {
@@ -28,5 +29,15 @@ for (const script of productionScripts) {
   assert.match(source, /connectToChromeOverCDP\(/, `${script} must use the shared CDP connector`);
   assert.doesNotMatch(source, /chromium\.connectOverCDP\(/, `${script} bypasses noDefaults`);
 }
+
+const legacyMicrophoneWrapper = await readFile(
+  resolve(repoRoot, "scripts/set-meet-mic.mjs"),
+  "utf8",
+);
+assert.match(
+  legacyMicrophoneWrapper,
+  /set-participant-mic\.mjs/,
+  "legacy Meet microphone entry point must delegate to the shared provider CLI",
+);
 
 process.stdout.write("Playwright CDP compatibility checks passed.\n");

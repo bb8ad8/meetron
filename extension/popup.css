@@ -102,12 +102,39 @@ input[type="url"]:focus { border-color: #1a73e8; box-shadow: 0 0 0 1px #1a73e8; 
 input.invalid { border-color: #d93025; box-shadow: 0 0 0 1px #d93025; }
 
 [data-launch-view] form { padding-top: 13px; }
+.provider-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 12px; }
+.provider-option {
+  height: 42px;
+  justify-content: space-between;
+  color: #3c4043;
+  background: #fff;
+  border-color: #dadce0;
+  font-weight: 600;
+}
+.provider-option:hover { color: #1a73e8; background: #f8f9fa; }
+.provider-option.selected { color: #1a73e8; background: #e8f0fe; border-color: #1a73e8; }
+.provider-option small { color: #5f6368; font-size: 10px; font-weight: 500; }
 .input-row { display: grid; grid-template-columns: minmax(0, 1fr) 82px; gap: 8px; }
 .message { min-height: 17px; margin: 7px 0 0; color: #5f6368; font-size: 11px; overflow-wrap: anywhere; }
 .message.error, .setup-message.error { color: #c5221f; }
 .message.success, .setup-message.success { color: #137333; }
+.start-guide { margin-top: 11px; padding: 11px 12px; background: #f8f9fa; border: 1px solid #e8eaed; border-radius: 7px; }
+.guide-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.guide-heading strong { font-size: 12px; }
+.guide-heading span { padding: 2px 6px; color: #137333; background: #e6f4ea; border-radius: 10px; font-size: 9px; font-weight: 700; }
+.zoom-guide .guide-heading span { color: #174ea6; background: #e8f0fe; }
+.start-guide ol { margin: 8px 0 0; padding-left: 20px; color: #3c4043; font-size: 11px; }
+.start-guide li + li { margin-top: 4px; }
+.start-guide p { margin: 8px 0 0; color: #5f6368; font-size: 10px; }
+.start-guide code { color: #3c4043; font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .launch { margin-top: 9px; padding-top: 9px; border-top: 1px solid #e8eaed; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #5f6368; font-size: 11px; }
 .launch strong { color: #3c4043; font-weight: 600; }
+.session-controls { margin-top: 9px; padding-top: 9px; border-top: 1px solid #e8eaed; }
+.session-summary { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #5f6368; font-size: 11px; }
+.session-summary strong { color: #3c4043; }
+.session-actions { display: grid; grid-template-columns: 1.25fr 1.25fr .7fr; gap: 6px; }
+.session-actions button { height: 34px; padding: 0 8px; font-size: 11px; }
+button.secondary.danger { color: #c5221f; }
 
 .setup-view { padding-top: 12px; }
 .setup-heading { display: flex; justify-content: space-between; align-items: center; color: #3c4043; font-size: 11px; font-weight: 600; }
@@ -145,10 +172,13 @@ input.invalid { border-color: #d93025; box-shadow: 0 0 0 1px #d93025; }
 
 @media (prefers-color-scheme: dark) {
   body { color: #e8eaed; background: #202124; }
-  header, .launch, .setup-nav { border-color: #3c4043; }
+  header, .launch, .session-controls, .setup-nav { border-color: #3c4043; }
   header p, .message, .step-copy, .setup-message, .setup-heading strong { color: #bdc1c6; }
-  label, .setup-heading, .launch strong { color: #e8eaed; }
+  label, .setup-heading, .launch strong, .session-summary strong { color: #e8eaed; }
   input[type="url"] { background: #292a2d; border-color: #5f6368; }
+  .provider-option { color: #e8eaed; background: #292a2d; border-color: #5f6368; }
+  .provider-option:hover { color: #8ab4f8; background: #3c4043; }
+  .provider-option.selected { color: #8ab4f8; background: #263850; border-color: #8ab4f8; }
   button.secondary { color: #8ab4f8; background: #292a2d; border-color: #5f6368; }
   button.secondary:hover, .icon-button:hover { background: #3c4043; }
   .icon-button { color: #e8eaed; }
@@ -157,4 +187,6 @@ input.invalid { border-color: #d93025; box-shadow: 0 0 0 1px #d93025; }
   .check-row strong { color: #bdc1c6; }
   .bootstrap { background: #292a2d; }
   .bootstrap code { color: #e8eaed; }
+  .start-guide { background: #292a2d; border-color: #3c4043; }
+  .start-guide ol, .start-guide code { color: #e8eaed; }
 }

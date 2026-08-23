@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertSessionOwnership } from "../src/core/session-state.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = resolve(
@@ -11,12 +12,26 @@ const runtimeDir = resolve(
 );
 const statePath = resolve(runtimeDir, "meeting-launch.json");
 const setupStatePath = resolve(runtimeDir, "setup.json");
-const meetingUrl = process.argv[2];
+const logPath = resolve(runtimeDir, "meeting-launch.log");
+const readsUrlFromStdin = process.argv[2] === "--url-stdin";
+const meetingUrl = readsUrlFromStdin ? readFileSync(0, "utf8").trim() : process.argv[2];
+const meetingDisplay = process.argv[3] || meetingUrl;
+const sessionId = process.argv[4] || null;
+const providerId = process.argv[5] || "google-meet";
+const audioBackendId = process.argv[6] || "legacy";
 
 function writeState(state) {
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  const current = existsSync(statePath)
+    ? JSON.parse(readFileSync(statePath, "utf8"))
+    : null;
+  assertSessionOwnership(current, sessionId);
   const temporaryPath = `${statePath}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(
+    temporaryPath,
+    `${JSON.stringify({ ...current, ...state, sessionId, providerId, audioBackendId }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
   renameSync(temporaryPath, statePath);
 }
 
@@ -47,24 +62,45 @@ function failureMessage(code, signal) {
       return "Google Meetの参加リクエストが拒否されました";
     case 15:
       return "Google Meetの参加状態を確認できませんでした";
-    default:
-      return `起動処理が終了コード ${code ?? signal} で停止しました`;
+    default: {
+      let detail = "";
+      try {
+        detail = readFileSync(logPath, "utf8")
+          .split("\n")
+          .reverse()
+          .map((line) => line.trim())
+          .find((line) => line.startsWith("Error: "))
+          ?.replace(/^Error:\s*/, "")
+          .replace(/([?&](?:pwd|passcode|password|zak|tk)=)[^&\s"']+/gi, "$1[REDACTED]")
+          .slice(0, 300) || "";
+      } catch {
+        // Fall back to the exit code when the detached launch log is unavailable.
+      }
+      return detail
+        ? `起動処理に失敗しました: ${detail}`
+        : `起動処理が終了コード ${code ?? signal} で停止しました`;
+    }
   }
 }
 
 const baseState = {
-  meetingUrl,
+  meetingUrl: meetingDisplay,
+  sessionId,
+  providerId,
+  audioBackendId,
   pid: process.pid,
   startedAt: new Date().toISOString(),
 };
 
 writeState({ ...baseState, status: "running" });
 
-const child = spawn(resolve(repoRoot, "scripts/start-meetron.sh"), [meetingUrl], {
+const child = spawn(resolve(repoRoot, "scripts/start-meetron.sh"), ["--url-stdin"], {
   cwd: repoRoot,
   env: process.env,
-  stdio: "inherit",
+  stdio: ["pipe", "inherit", "inherit"],
 });
+child.stdin.on("error", () => {});
+child.stdin.end(`${meetingUrl}\n`);
 
 child.on("error", (error) => {
   writeState({

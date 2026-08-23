@@ -75,7 +75,7 @@ if [ "$uninstall" -eq 1 ]; then
 fi
 
 if [ ! -d "$repo_root/node_modules/playwright-core" ]; then
-  printf 'playwright-core is required. Run: npm install\n' >&2
+  printf 'playwright-core is required. Run: npm ci\n' >&2
   exit 1
 fi
 

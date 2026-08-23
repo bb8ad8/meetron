@@ -2,87 +2,51 @@
 
 import { getAudioStatus } from "./audio-backend.mjs";
 import { connectToChromeOverCDP } from "./playwright-cdp.mjs";
+import {
+  clickFirstVisible,
+  closeOtherPages,
+  firstBrowserContext,
+  locatorIsVisible,
+} from "../src/browser/meeting-browser.mjs";
+import {
+  exactDevicePattern,
+  resolveMeetingAudioDevices,
+} from "../src/audio/meeting-audio-devices.mjs";
+import {
+  parsePreparationOptions,
+  PREPARATION_EXIT_CODES,
+  preparationUsage,
+} from "../src/core/preparation-cli.mjs";
+import { createPreparationResult } from "../src/core/participant-state.mjs";
 
 const CONTROLLER_EXTENSION_ID = "jlikakgdldiihhflkobhnpfegjlcakdd";
 
-const args = process.argv.slice(2);
-const options = {
-  cdp: "http://127.0.0.1:9223",
-  join: false,
-  joinDelay: 2,
-  microphoneDevice: "",
-  name: "GPT-Live",
-  speakerDevice: "",
-  url: "",
-};
-
 function usage() {
-  process.stdout.write(`Usage: node scripts/prepare-meet.mjs [options]\n\nOptions:\n  --cdp URL                Chrome DevTools endpoint (default: ${options.cdp})\n  --name NAME              Meet participant name (default: ${options.name})\n  --url URL                Expected Google Meet URL\n  --microphone-device NAME Override the selected virtual microphone\n  --speaker-device NAME    Override the selected virtual speaker\n  --join                   Request admission after preparing the pre-join screen\n  --join-delay SEC         Wait before requesting admission (default: ${options.joinDelay})\n  -h, --help               Show this help\n`);
+  process.stdout.write(preparationUsage({
+    providerLabel: "Google Meet",
+    scriptName: "prepare-meet.mjs",
+  }));
 }
 
-for (let index = 0; index < args.length; index += 1) {
-  const argument = args[index];
-  switch (argument) {
-    case "--cdp":
-      options.cdp = args[++index] || "";
-      break;
-    case "--name":
-      options.name = args[++index] || "";
-      break;
-    case "--microphone-device":
-      options.microphoneDevice = args[++index] || "";
-      break;
-    case "--speaker-device":
-      options.speakerDevice = args[++index] || "";
-      break;
-    case "--url":
-      options.url = args[++index] || "";
-      break;
-    case "--join":
-      options.join = true;
-      break;
-    case "--join-delay":
-      options.joinDelay = Number(args[++index]);
-      break;
-    case "-h":
-    case "--help":
-      usage();
-      process.exit(0);
-      break;
-    default:
-      process.stderr.write(`Unknown argument: ${argument}\n`);
-      usage();
-      process.exit(2);
-  }
+let options;
+try {
+  options = parsePreparationOptions(process.argv.slice(2));
+} catch (error) {
+  process.stderr.write(`${error.message}\n`);
+  usage();
+  process.exit(2);
 }
+if (options.help) { usage(); process.exit(0); }
 
 if (!options.url.startsWith("https://meet.google.com/")) {
   process.stderr.write("A Google Meet URL is required with --url.\n");
   process.exit(2);
 }
 
-if (!Number.isFinite(options.joinDelay) || options.joinDelay < 0) {
-  process.stderr.write("--join-delay must be a non-negative number.\n");
-  process.exit(2);
-}
-
-if (!options.microphoneDevice || !options.speakerDevice) {
-  const audio = await getAudioStatus();
-  options.microphoneDevice ||= audio.routing.meetingMicrophone.name;
-  options.speakerDevice ||= audio.routing.meetingSpeaker.name;
-}
-
-function exactDevicePattern(name) {
-  return new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-}
+Object.assign(options, await resolveMeetingAudioDevices(options, getAudioStatus));
 
 const browser = await connectToChromeOverCDP(options.cdp);
-const contexts = browser.contexts();
-if (contexts.length === 0) {
-  throw new Error("Chrome did not expose a browser context.");
-}
-
-const context = contexts[0];
+const context = await firstBrowserContext(browser);
 await context.grantPermissions(["microphone"], {
   origin: "https://meet.google.com",
 });
@@ -98,11 +62,7 @@ const meetPages = context
   .pages()
   .filter((candidate) => candidate.url().startsWith("https://meet.google.com/"));
 let page = meetPages.find((candidate) => candidate.url().startsWith(options.url));
-await Promise.all(
-  meetPages
-    .filter((candidate) => candidate !== page)
-    .map((candidate) => candidate.close()),
-);
+await closeOtherPages(meetPages, page);
 
 if (!page) {
   page = await context.newPage();
@@ -112,20 +72,6 @@ if (!page) {
 await page.bringToFront();
 await page.waitForLoadState("domcontentloaded");
 page.setDefaultTimeout(5_000);
-
-async function clickFirst(locators, timeout = 2_000) {
-  for (const locator of locators) {
-    try {
-      if ((await locator.count()) > 0 && (await locator.first().isVisible())) {
-        await locator.first().click({ timeout });
-        return true;
-      }
-    } catch {
-      // Meet changes frequently; try the next localized selector.
-    }
-  }
-  return false;
-}
 
 async function fillParticipantName() {
   const fields = [
@@ -164,7 +110,7 @@ try {
   // Granting the permission can dismiss the dialog before it becomes visible.
 }
 
-const usedMicrophone = await clickFirst(microphoneOnboardingButtons);
+const usedMicrophone = await clickFirstVisible(microphoneOnboardingButtons);
 
 await page.waitForTimeout(500);
 
@@ -210,14 +156,6 @@ async function visibleControlState({ on, off }) {
     return "on";
   }
   return "unavailable";
-}
-
-async function locatorIsVisible(locator) {
-  try {
-    return (await locator.count()) > 0 && (await locator.first().isVisible());
-  } catch {
-    return false;
-  }
 }
 
 const turnMicrophoneOn = page.getByRole("button", {
@@ -272,12 +210,15 @@ const resolvedMicrophoneDevice =
 const resolvedSpeakerDevice =
   (await speakerButton.getAttribute("aria-label")) || speakerDevice;
 
-let joinStatus = "not-requested";
+let connection = "prejoin";
+let actionRequired = null;
 if (options.join) {
   if (cameraState === "control-unavailable") {
-    joinStatus = "manual-camera-check-required";
+    connection = "manual-action-required";
+    actionRequired = "camera-check";
   } else if (nameFilled) {
-    joinStatus = "anonymous-login-required";
+    connection = "manual-action-required";
+    actionRequired = "google-login";
   } else {
     const joinButton = page.getByRole("button", {
       name: /参加をリクエスト|今すぐ参加|ask to join|join now/i,
@@ -308,20 +249,21 @@ if (options.join) {
 
       const bodyText = await page.locator("body").innerText();
       if (/参加できません|can't join|cannot join/i.test(bodyText)) {
-        joinStatus = "rejected";
+        connection = "rejected";
       } else if (/通話から退出|leave call/i.test(bodyText)) {
-        joinStatus = "joined";
+        connection = "joined";
       } else if (
         /参加を許可するまで|waiting for the host|asking to join/i.test(bodyText)
       ) {
-        joinStatus = "waiting-for-admission";
+        connection = "waiting";
       } else {
-        joinStatus = "requested-status-unknown";
+        connection = "manual-action-required";
+        actionRequired = "admission-status-check";
       }
     } catch (error) {
       const bodyText = await page.locator("body").innerText().catch(() => "");
       if (/通話から退出|leave call/i.test(bodyText)) {
-        joinStatus = "already-joined";
+        connection = "joined";
       } else {
         throw new Error(`Could not request Meet admission: ${error.message}`);
       }
@@ -329,7 +271,29 @@ if (options.join) {
   }
 }
 
-const result = {
+const legacyJoinStatus = actionRequired === "camera-check"
+  ? "manual-camera-check-required"
+  : actionRequired === "google-login"
+    ? "anonymous-login-required"
+    : actionRequired === "admission-status-check"
+      ? "requested-status-unknown"
+      : connection === "waiting"
+        ? "waiting-for-admission"
+        : connection === "prejoin"
+          ? "not-requested"
+          : connection;
+const result = createPreparationResult({
+  providerId: "google-meet",
+  meetingUrl: page.url(),
+  connection,
+  microphone: microphoneState === "off" ? "muted" : "unavailable",
+  camera:
+    cameraState === "off"
+      ? "off"
+      : cameraState === "unavailable"
+        ? "unavailable"
+        : "unknown",
+  // Compatibility fields retained for direct users of the published script.
   url: page.url(),
   permission: "microphone granted for meet.google.com",
   microphoneOnboarding: usedMicrophone ? "dismissed" : "not shown",
@@ -339,21 +303,22 @@ const result = {
   cameraState,
   microphoneDevice: resolvedMicrophoneDevice,
   speakerDevice: resolvedSpeakerDevice,
-  joinStatus,
+  actionRequired,
+  joinStatus: legacyJoinStatus,
   title: await page.title(),
-};
+});
 
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-if (joinStatus === "anonymous-login-required") {
-  process.exit(13);
+if (actionRequired === "google-login") {
+  process.exit(PREPARATION_EXIT_CODES.loginRequired);
 }
-if (joinStatus === "rejected") {
-  process.exit(14);
+if (connection === "rejected") {
+  process.exit(PREPARATION_EXIT_CODES.rejected);
 }
-if (joinStatus === "requested-status-unknown") {
-  process.exit(15);
+if (actionRequired === "admission-status-check") {
+  process.exit(PREPARATION_EXIT_CODES.stateUnknown);
 }
-if (joinStatus === "manual-camera-check-required") {
-  process.exit(16);
+if (actionRequired === "camera-check") {
+  process.exit(PREPARATION_EXIT_CODES.manualActionRequired);
 }
 process.exit(0);

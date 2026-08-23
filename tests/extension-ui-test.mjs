@@ -12,6 +12,8 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 720 
 
 await context.addInitScript(() => {
   globalThis.__nativeRequests = [];
+  globalThis.__storageWrites = [];
+  globalThis.__activeProvider = "google-meet";
   globalThis.chrome = {
     runtime: {
       id: "jlikakgdldiihhflkobhnpfegjlcakdd",
@@ -20,13 +22,35 @@ await context.addInitScript(() => {
         if (request.type === "diagnostics.run") {
           return { ok: true, data: { ok: true, output: "All checks passed." } };
         }
-        if (request.type === "meeting.start") {
+        if (request.type === "meeting.validate") {
+          const zoom = request.payload.meetingUrl.includes("zoom.us");
           return {
             ok: true,
-            data: { status: "starting", meetingUrl: request.payload.meetingUrl },
+            data: {
+              valid: true,
+              providerId: zoom ? "zoom-web" : "google-meet",
+              providerLabel: zoom ? "Zoom Web App" : "Google Meet",
+              displayUrl: zoom
+                ? request.payload.meetingUrl.replace(/\?.*$/, "")
+                : request.payload.meetingUrl,
+              containsSecret: zoom && request.payload.meetingUrl.includes("pwd="),
+            },
           };
         }
-        if (request.type === "meet.mic.toggle") {
+        if (request.type === "session.start") {
+          globalThis.__activeProvider = request.payload.meetingUrl.includes("zoom.us")
+            ? "zoom-web"
+            : "google-meet";
+          return {
+            ok: true,
+            data: {
+              status: "starting",
+              providerId: globalThis.__activeProvider,
+              meetingUrl: request.payload.meetingUrl,
+            },
+          };
+        }
+        if (["meet.mic.toggle", "participant.mic.toggle"].includes(request.type)) {
           return { ok: true, data: { status: "ok", after: "unmuted", verified: true } };
         }
         if (request.type === "setup.status") {
@@ -97,6 +121,23 @@ await context.addInitScript(() => {
             },
           };
         }
+        if (globalThis.__launchInProgress) {
+          return {
+            ok: true,
+            data: {
+              host: { connected: true },
+              audio: { ready: true },
+              chatgpt: { browserConnected: false, voiceActive: false },
+              dedicatedMeeting: {
+                browserConnected: false,
+                connection: "not-running",
+                microphone: "unavailable",
+                providerId: "zoom-web",
+              },
+              meetingLaunch: { status: "running", providerId: "zoom-web" },
+            },
+          };
+        }
         return {
           ok: true,
           data: {
@@ -108,15 +149,22 @@ await context.addInitScript(() => {
               microphoneOn: true,
               audioOutput: { routed: true, internalChecked: true },
             },
-            dedicatedMeet: {
+            dedicatedMeeting: {
               browserConnected: true,
               connection: "joined",
               microphone: "muted",
-              url: "https://meet.google.com/abc-defg-hij",
+              providerId: globalThis.__activeProvider,
+              audioConnection: globalThis.__activeProvider === "zoom-web" ? "connected" : "unknown",
+              url: globalThis.__activeProvider === "zoom-web"
+                ? "https://us02web.zoom.us/j/12345678901"
+                : "https://meet.google.com/abc-defg-hij",
             },
             meetingLaunch: {
               status: "completed",
-              meetingUrl: "https://meet.google.com/abc-defg-hij",
+              providerId: globalThis.__activeProvider,
+              meetingUrl: globalThis.__activeProvider === "zoom-web"
+                ? "https://us02web.zoom.us/j/12345678901"
+                : "https://meet.google.com/abc-defg-hij",
             },
             meetMicrophone: {
               state: "muted",
@@ -129,7 +177,7 @@ await context.addInitScript(() => {
     storage: {
       local: {
         get: async () => ({}),
-        set: async () => {},
+        set: async (value) => { globalThis.__storageWrites.push(value); },
       },
     },
   };
@@ -199,7 +247,7 @@ await page.evaluate(() => {
     .click();
 });
 const untrustedRequest = await page.evaluate(() =>
-  globalThis.__nativeRequests.some((entry) => entry.type === "meet.mic.toggle"),
+  globalThis.__nativeRequests.some((entry) => entry.type === "participant.mic.toggle"),
 );
 if (untrustedRequest) {
   throw new Error("An untrusted page-generated click reached the Native Host.");
@@ -214,7 +262,9 @@ const after = await page.evaluate(() => {
     meet: root.querySelector("[data-meet-status]").textContent,
     mic: root.querySelector("[data-mic] span").textContent,
     message: root.querySelector("[data-message]").textContent,
-    nativeRequested: globalThis.__nativeRequests.some((entry) => entry.type === "meet.mic.toggle"),
+    nativeRequested: globalThis.__nativeRequests.some(
+      (entry) => entry.type === "participant.mic.toggle",
+    ),
     userMicrophoneLabel: document.querySelector("#meet-mic").getAttribute("aria-label"),
   };
 });
@@ -229,7 +279,85 @@ if (
   throw new Error(`Remote GPT microphone control did not stay isolated: ${JSON.stringify(after)}`);
 }
 
+await page.locator("#meeting-copilot-controls-root [data-diagnostics]").click();
+await page.waitForFunction(() =>
+  document
+    .querySelector("#meeting-copilot-controls-root")
+    ?.shadowRoot.querySelector("[data-message]")
+    ?.textContent === "診断が完了しました",
+);
+const diagnostics = await page.evaluate(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  return {
+    requested: globalThis.__nativeRequests.some((entry) => entry.type === "diagnostics.run"),
+    rawOutputPresent: Boolean(root?.querySelector("[data-diagnostics-output]")),
+    message: root?.querySelector("[data-message]")?.textContent,
+  };
+});
+if (
+  !diagnostics.requested ||
+  diagnostics.rawOutputPresent ||
+  diagnostics.message !== "診断が完了しました"
+) {
+  throw new Error(`Diagnostics exposed raw logs in the control UI: ${JSON.stringify(diagnostics)}`);
+}
+
 await page.screenshot({ path: "/tmp/meeting-copilot-control-ui.png" });
+
+await context.route("https://app.zoom.us/**", async (route) => {
+  await route.fulfill({
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><body><main><h1>Zoom meeting test</h1></main></body></html>`,
+  });
+});
+const zoomPage = await context.newPage();
+await zoomPage.goto("https://app.zoom.us/wc/12345678901/join");
+await zoomPage.evaluate(script);
+await zoomPage.waitForTimeout(500);
+const zoomPanel = await zoomPage.evaluate(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  return {
+    exists: Boolean(root),
+    meeting: root?.querySelector("[data-meet-status]")?.textContent,
+    mic: root?.querySelector("[data-mic] span")?.textContent,
+  };
+});
+if (!zoomPanel.exists || zoomPanel.meeting !== "参加中・ミュート" || zoomPanel.mic !== "ミュート解除") {
+  throw new Error(`Zoom page did not receive the persistent controls: ${JSON.stringify(zoomPanel)}`);
+}
+await zoomPage.evaluate(() => { globalThis.__launchInProgress = true; });
+await zoomPage.locator("#meeting-copilot-controls-root [data-refresh]").click();
+await zoomPage.waitForTimeout(100);
+const launchingPanel = await zoomPage.evaluate(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  return {
+    meeting: root?.querySelector("[data-meet-status]")?.textContent,
+    voice: root?.querySelector("[data-voice-status]")?.textContent,
+    audio: root?.querySelector("[data-audio-status]")?.textContent,
+  };
+});
+if (
+  launchingPanel.meeting !== "起動中" ||
+  launchingPanel.voice !== "起動中" ||
+  launchingPanel.audio !== "準備中"
+) {
+  throw new Error(`Zoom launch progress looked disconnected: ${JSON.stringify(launchingPanel)}`);
+}
+await zoomPage.evaluate(() => { globalThis.__launchInProgress = false; });
+const dedicatedZoomPage = await context.newPage();
+await dedicatedZoomPage.goto("https://app.zoom.us/wc/12345678901/join");
+await dedicatedZoomPage.evaluate(() => {
+  document.documentElement.setAttribute("data-meetron-dedicated-participant", "true");
+});
+await dedicatedZoomPage.evaluate(script);
+await dedicatedZoomPage.waitForTimeout(100);
+if (await dedicatedZoomPage.locator("#meeting-copilot-controls-root").count()) {
+  throw new Error("The persistent controls covered the dedicated Zoom participant UI.");
+}
+const dedicatedRequests = await dedicatedZoomPage.evaluate(() => globalThis.__nativeRequests);
+if (!dedicatedRequests.some((entry) => entry.type === "session.reconcile")) {
+  throw new Error("The dedicated Zoom participant did not start post-admission reconciliation.");
+}
 
 const popup = await context.newPage();
 const popupHtml = (await readFile(resolve(repoRoot, "extension/popup.html"), "utf8"))
@@ -238,22 +366,63 @@ const popupHtml = (await readFile(resolve(repoRoot, "extension/popup.html"), "ut
 await popup.setContent(popupHtml);
 await popup.addStyleTag({ content: await readFile(resolve(repoRoot, "extension/popup.css"), "utf8") });
 await popup.evaluate(await readFile(resolve(repoRoot, "extension/popup.js"), "utf8"));
-await popup.locator("#meeting-url").fill("https://meet.google.com/abc-defg-hij");
+await popup.locator("#meeting-url").fill("https://meet.google.com/abc-defg-hij?utm_source=test#fragment");
 await popup.locator("[data-start]").click();
 await popup.waitForFunction(() =>
   document.querySelector("[data-message]")?.textContent.includes("開始しました"),
 );
 
 const popupResult = await popup.evaluate(() => ({
-  request: globalThis.__nativeRequests.find((entry) => entry.type === "meeting.start"),
+  request: globalThis.__nativeRequests.find((entry) => entry.type === "session.start"),
+  validation: globalThis.__nativeRequests.find((entry) => entry.type === "meeting.validate"),
   message: document.querySelector("[data-message]").textContent,
   launch: document.querySelector("[data-launch-status]").textContent,
 }));
 if (
-  popupResult.request?.payload?.meetingUrl !== "https://meet.google.com/abc-defg-hij" ||
+  popupResult.request?.payload?.meetingUrl !== "https://meet.google.com/abc-defg-hij?utm_source=test#fragment" ||
+  popupResult.validation?.payload?.meetingUrl !== popupResult.request?.payload?.meetingUrl ||
   popupResult.launch !== "起動完了"
 ) {
   throw new Error(`Popup start did not submit the Meet URL: ${JSON.stringify(popupResult)}`);
+}
+
+await popup.locator("#meeting-url").fill(
+  "https://us02web.zoom.us/j/12345678901?pwd=do-not-store&utm_source=test",
+);
+await popup.waitForFunction(() =>
+  document.querySelector('[data-provider="zoom-web"]')?.classList.contains("selected") &&
+  !document.querySelector('[data-provider-guide="zoom-web"]')?.hidden,
+);
+await popup.locator("[data-start]").click();
+await popup.waitForFunction(() =>
+  document.querySelector("[data-message]")?.textContent.includes("Zoomの参加準備が完了"),
+);
+await popup.waitForFunction(() =>
+  document.querySelector("[data-session-provider]")?.textContent.includes("Zoom") &&
+  !document.querySelector("[data-session-controls]")?.hidden,
+);
+await popup.locator("[data-session-mic]").click();
+await popup.waitForFunction(() =>
+  globalThis.__nativeRequests.some((entry) => entry.type === "participant.mic.toggle"),
+);
+const zoomPopupResult = await popup.evaluate(() => ({
+  request: [...globalThis.__nativeRequests]
+    .reverse()
+    .find((entry) => entry.type === "session.start"),
+  storage: globalThis.__storageWrites.at(-1),
+  guide: document.querySelector('[data-provider-guide="zoom-web"]')?.textContent,
+  micRequested: globalThis.__nativeRequests.some(
+    (entry) => entry.type === "participant.mic.toggle",
+  ),
+}));
+if (
+  zoomPopupResult.request?.payload?.meetingUrl !==
+    "https://us02web.zoom.us/j/12345678901?pwd=do-not-store&utm_source=test" ||
+  zoomPopupResult.storage?.lastMeetingUrl !== "" ||
+  !zoomPopupResult.micRequested ||
+  !zoomPopupResult.guide?.includes("ブラウザから参加")
+) {
+  throw new Error(`Popup Zoom guide or secret storage failed: ${JSON.stringify(zoomPopupResult)}`);
 }
 await popup.screenshot({ path: "/tmp/meeting-copilot-popup-ui.png" });
 

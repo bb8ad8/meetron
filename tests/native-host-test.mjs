@@ -47,7 +47,9 @@ function frame(message) {
 // accepted request before it exits so cleanup commands are not interrupted.
 child.stdin.end(Buffer.concat([
   frame({ id: "test-ping", type: "ping" }),
+  frame({ requestId: "test-version", protocolVersion: 99, type: "ping" }),
   frame({ id: "test-invalid-url", type: "meeting.start", payload: { meetingUrl: "https://example.com/not-meet" } }),
+  frame({ id: "test-valid-url", type: "meeting.validate", payload: { meetingUrl: "https://meet.google.com/abc-defg-hij" } }),
   frame({ id: "test-invalid-project", type: "setup.project.save", payload: { projectUrl: "https://example.com/project" } }),
   frame({ id: "test-invalid-confirmation", type: "setup.confirm", payload: { step: "unknown", complete: true } }),
   frame({ id: "test-setup-status", type: "setup.status" }),
@@ -72,22 +74,31 @@ child.stdout.on("data", (chunk) => {
     output = output.subarray(length + 4);
   }
 
-  if (responses.length < 5) {
+  if (responses.length < 7) {
     return;
   }
   clearTimeout(timeout);
   child.kill();
   const ping = responses.find((response) => response.id === "test-ping");
+  const invalidVersion = responses.find((response) => response.requestId === "test-version");
   const invalidUrl = responses.find((response) => response.id === "test-invalid-url");
+  const validUrl = responses.find((response) => response.id === "test-valid-url");
   const invalidProject = responses.find((response) => response.id === "test-invalid-project");
   const invalidConfirmation = responses.find((response) => response.id === "test-invalid-confirmation");
   const setupStatus = responses.find((response) => response.id === "test-setup-status");
   if (
     ping?.ok !== true ||
+    ping.protocolVersion !== 1 ||
+    ping.requestId !== "test-ping" ||
     ping.data?.pong !== true ||
     ping.data?.extensionId !== "jlikakgdldiihhflkobhnpfegjlcakdd" ||
+    invalidVersion?.ok !== false ||
+    invalidVersion.errorData?.code !== "PROTOCOL_VERSION_UNSUPPORTED" ||
     invalidUrl?.ok !== false ||
-    !invalidUrl.error?.includes("meet.google.com") ||
+    !invalidUrl.error?.includes("Google MeetまたはZoom") ||
+    validUrl?.ok !== true ||
+    validUrl.data?.providerId !== "google-meet" ||
+    validUrl.data?.displayUrl !== "https://meet.google.com/abc-defg-hij" ||
     invalidProject?.ok !== false ||
     !invalidProject.error?.includes("ChatGPT Project") ||
     invalidConfirmation?.ok !== false ||

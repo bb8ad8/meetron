@@ -17,27 +17,49 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { getAudioStatus } from "./audio-backend.mjs";
 import { connectToChromeOverCDP } from "./playwright-cdp.mjs";
+import { locatorIsVisible } from "../src/browser/meeting-browser.mjs";
+import { MeetronError } from "../src/core/errors.mjs";
+import {
+  createProtocolResponse,
+  normalizeProtocolRequest,
+  PROTOCOL_VERSION,
+} from "../src/core/protocol.mjs";
+import { createSessionState, migrateSessionState } from "../src/core/session-state.mjs";
+import { SessionOrchestrator } from "../src/core/session-orchestrator.mjs";
+import {
+  getMeetingProvider,
+  normalizeMeeting,
+  supportedMeetingProviders,
+} from "../src/providers/provider-registry.mjs";
+import {
+  assertMicrophoneState,
+  createParticipantStatus,
+} from "../src/core/participant-state.mjs";
+import { getPlatformAdapter } from "../src/platform/platform-registry.mjs";
 
 const EXTENSION_ID = "jlikakgdldiihhflkobhnpfegjlcakdd";
 const EXPECTED_ORIGIN = `chrome-extension://${EXTENSION_ID}/`;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const platformAdapter = getPlatformAdapter();
+const platformPaths = platformAdapter.resolvePaths({
+  repoRoot,
+  home: process.env.HOME || "",
+  env: process.env,
+});
 const appVersion = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version;
 const scriptsDir = resolve(repoRoot, "scripts");
-const runtimeDir = resolve(
-  process.env.MEETING_COPILOT_RUNTIME_DIR || resolve(repoRoot, ".meeting-copilot-runtime"),
-);
+const runtimeDir = platformPaths.runtimeDir;
 const meetingStatePath = resolve(runtimeDir, "meeting-launch.json");
 const meetingLogPath = resolve(runtimeDir, "meeting-launch.log");
 const micStatePath = resolve(runtimeDir, "meet-mic.json");
 const setupStatePath = resolve(runtimeDir, "setup.json");
 const envPath = resolve(repoRoot, ".meeting-copilot.env");
-const dedicatedProfileDir =
-  process.env.MEETING_COPILOT_PROFILE_DIR ||
-  resolve(process.env.HOME || "", "Library/Application Support/MeetingCopilot/GPTParticipantChrome");
+const dedicatedProfileDir = platformPaths.dedicatedProfileDir;
 const PROFILE_LAYOUT_VERSION = 2;
 let dedicatedBrowser = null;
+let dedicatedBrowserConnection = null;
 
 if (process.argv.includes("--help")) {
   process.stdout.write(`Meetron Native Messaging Host\n\nExpected extension: ${EXTENSION_ID}\n`);
@@ -132,26 +154,33 @@ function writeJsonAtomic(path, value) {
 
 async function connectDedicatedChrome() {
   const port = configuredPort("MEETING_COPILOT_CDP_PORT", "9223");
-  await run(
-    process.execPath,
-    [
-      resolve(scriptsDir, "verify-dedicated-chrome.mjs"),
-      "--profile-dir",
-      dedicatedProfileDir,
-      "--port",
-      port,
-    ],
-    5_000,
-  );
   if (dedicatedBrowser?.isConnected()) {
     return dedicatedBrowser;
   }
-
-  dedicatedBrowser = await connectToChromeOverCDP(
-    `http://127.0.0.1:${port}`,
-    { timeout: 3_000 },
-  );
-  return dedicatedBrowser;
+  if (!dedicatedBrowserConnection) {
+    dedicatedBrowserConnection = (async () => {
+      await run(
+        process.execPath,
+        [
+          resolve(scriptsDir, "verify-dedicated-chrome.mjs"),
+          "--profile-dir",
+          dedicatedProfileDir,
+          "--port",
+          port,
+        ],
+        5_000,
+      );
+      const browser = await connectToChromeOverCDP(
+        `http://127.0.0.1:${port}`,
+        { timeout: 3_000 },
+      );
+      dedicatedBrowser = browser;
+      return browser;
+    })().finally(() => {
+      dedicatedBrowserConnection = null;
+    });
+  }
+  return dedicatedBrowserConnection;
 }
 
 async function getChatgptPage() {
@@ -210,67 +239,49 @@ async function getChatgptStatus() {
   }
 }
 
-async function locatorIsVisible(locator) {
-  try {
-    return (await locator.count()) > 0 && (await locator.first().isVisible());
-  } catch {
-    return false;
-  }
+function activeProviderId() {
+  return getMeetingLaunchState()?.providerId || "google-meet";
 }
 
-async function getDedicatedMeetStatus() {
+async function getDedicatedMeetingStatus(providerId = activeProviderId()) {
   try {
     const browser = await connectDedicatedChrome();
-    const page = browser
-      .contexts()
-      .flatMap((context) => context.pages())
-      .find((candidate) => candidate.url().startsWith("https://meet.google.com/"));
-    if (!page) {
-      return {
-        browserConnected: true,
-        connection: "not-running",
-        microphone: "unavailable",
+    const provider = getMeetingProvider(providerId);
+    let status = await provider.getStatus(browser, locatorIsVisible);
+    const tracked = getParticipantMicrophoneState();
+    const desiredMicrophone =
+      tracked?.providerId === providerId &&
+      new Set(["muted", "unmuted"]).has(tracked.state)
+        ? tracked.state
+        : "muted";
+    let readiness;
+    try {
+      readiness = await provider.reconcileSession(browser, locatorIsVisible, {
+        status,
+        desiredMicrophone,
+      });
+      if (readiness.changed) {
+        status = await provider.getStatus(browser, locatorIsVisible);
+      }
+    } catch (error) {
+      readiness = {
+        ready: false,
+        changed: false,
+        error: error.message,
       };
     }
-
-    const turnOn = page.getByRole("button", {
-      name: /マイクをオン(?:にする)?|turn on microphone|unmute microphone/i,
-    });
-    const turnOff = page.getByRole("button", {
-      name: /マイクをオフ(?:にする)?|turn off microphone|mute microphone/i,
-    });
-    const leave = page.getByRole("button", { name: /通話から退出|leave call/i });
-    const [turnOnVisible, turnOffVisible, leaveVisible, bodyText] = await Promise.all([
-      locatorIsVisible(turnOn),
-      locatorIsVisible(turnOff),
-      locatorIsVisible(leave),
-      page.locator("body").innerText().catch(() => ""),
-    ]);
-
-    let connection = "prejoin";
-    if (leaveVisible) {
-      connection = "joined";
-    } else if (/参加を許可するまで|waiting for the host|asking to join/i.test(bodyText)) {
-      connection = "waiting";
-    } else if (/参加できません|can't join|cannot join/i.test(bodyText)) {
-      connection = "rejected";
-    }
-
-    return {
-      browserConnected: true,
-      connection,
-      microphone: turnOnVisible ? "muted" : turnOffVisible ? "unmuted" : "unavailable",
-      url: page.url(),
-      title: await page.title(),
-    };
+    return { ...status, providerId, readiness };
   } catch (error) {
     dedicatedBrowser = null;
-    return {
+    return createParticipantStatus({
       browserConnected: false,
       connection: "not-running",
       microphone: "unavailable",
+      camera: "unknown",
+      audioConnection: "unknown",
+      providerId,
       error: error.message,
-    };
+    });
   }
 }
 
@@ -306,26 +317,9 @@ async function stopVoice() {
   return { stopped: true, alreadyStopped: false };
 }
 
-async function leaveDedicatedMeet() {
+async function leaveDedicatedMeeting(providerId = activeProviderId()) {
   const browser = await connectDedicatedChrome();
-  const page = browser
-    .contexts()
-    .flatMap((context) => context.pages())
-    .find((candidate) => candidate.url().startsWith("https://meet.google.com/"));
-  if (!page) {
-    return { left: false, alreadyLeft: true, tabClosed: true };
-  }
-
-  const leave = page.getByRole("button", { name: /通話から退出|leave call/i });
-  const leaveVisible = await locatorIsVisible(leave);
-  if (leaveVisible) {
-    await leave.first().click({ force: true, timeout: 5_000 });
-    await page.waitForTimeout(300);
-  }
-  if (!page.isClosed()) {
-    await page.close({ runBeforeUnload: false });
-  }
-  return { left: leaveVisible, alreadyLeft: !leaveVisible, tabClosed: true };
+  return getMeetingProvider(providerId).leave(browser, locatorIsVisible);
 }
 
 function projectConfigured() {
@@ -584,7 +578,7 @@ function getMeetingLaunchState() {
     return null;
   }
   try {
-    const state = JSON.parse(readFileSync(meetingStatePath, "utf8"));
+    const state = migrateSessionState(JSON.parse(readFileSync(meetingStatePath, "utf8")));
     const startingWithoutPid = state.status === "starting" && !Number.isInteger(state.pid);
     const startingAge = Date.now() - Date.parse(state.startedAt || "");
     if (startingWithoutPid && Number.isFinite(startingAge) && startingAge <= 30_000) {
@@ -599,7 +593,7 @@ function getMeetingLaunchState() {
   }
 }
 
-function getMeetMicrophoneState() {
+function getParticipantMicrophoneState() {
   if (!existsSync(micStatePath)) {
     return null;
   }
@@ -611,60 +605,37 @@ function getMeetMicrophoneState() {
   }
 }
 
-function normalizeMeetingUrl(value) {
-  let url;
-  try {
-    url = new URL(String(value || "").trim());
-  } catch {
-    throw new Error("有効なGoogle Meet URLを入力してください");
-  }
-
-  if (
-    url.protocol !== "https:" ||
-    url.hostname !== "meet.google.com" ||
-    url.port ||
-    url.username ||
-    url.password ||
-    !/^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/i.test(url.pathname)
-  ) {
-    throw new Error("https://meet.google.com/xxx-xxxx-xxx 形式のURLを入力してください");
-  }
-  url.hash = "";
-  return url.toString();
-}
-
-function startMeeting(payload) {
-  const currentState = getMeetingLaunchState();
-  if (
-    currentState?.status === "starting" ||
-    (currentState?.status === "running" && processIsRunning(currentState.pid))
-  ) {
-    throw new Error("別のMeet起動処理が進行中です");
-  }
-
-  const meetingUrl = normalizeMeetingUrl(payload?.meetingUrl);
+async function launchSession({ meeting, state }) {
+  const meetingUrl = meeting.url;
   dedicatedBrowser = null;
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   writeJsonAtomic(micStatePath, {
-    meetingUrl,
+    meetingUrl: meeting.displayUrl,
+    sessionId: state.sessionId,
+    providerId: state.providerId,
     state: "unknown",
     updatedAt: new Date().toISOString(),
   });
-  const state = {
-    status: "starting",
-    meetingUrl,
-    pid: null,
-    startedAt: new Date().toISOString(),
-  };
   writeJsonAtomic(meetingStatePath, state);
   rotateLog(meetingLogPath);
   const log = openSync(meetingLogPath, "a", 0o600);
-  const child = spawn(process.execPath, [resolve(scriptsDir, "meeting-start-job.mjs"), meetingUrl], {
+  const child = spawn(process.execPath, [
+    resolve(scriptsDir, "meeting-start-job.mjs"),
+    "--url-stdin",
+    meeting.displayUrl,
+    state.sessionId,
+    state.providerId,
+    state.audioBackendId,
+  ], {
     cwd: repoRoot,
     detached: true,
     env: commandEnvironment(),
-    stdio: ["ignore", log, log],
+    stdio: ["pipe", log, log],
   });
+  child.stdin.on("error", () => {
+    // The launch job reports its own startup failure through the state file.
+  });
+  child.stdin.end(`${meetingUrl}\n`);
   try {
     const latestState = JSON.parse(readFileSync(meetingStatePath, "utf8"));
     if (latestState.status === "starting" && latestState.startedAt === state.startedAt) {
@@ -679,51 +650,103 @@ function startMeeting(payload) {
   return { ...state, pid: child.pid };
 }
 
+async function startMeeting(payload) {
+  return sessionOrchestrator.start(payload || {});
+}
+
+function validateMeeting(payload) {
+  return sessionOrchestrator.validateMeeting(payload?.meetingUrl);
+}
+
 async function getStatus() {
-  const [audio, chatgpt, dedicatedMeet] = await Promise.all([
+  const providerId = activeProviderId();
+  const [audio, chatgpt, dedicatedMeeting] = await Promise.all([
     getAudioStatus(),
     getChatgptStatus(),
-    getDedicatedMeetStatus(),
+    getDedicatedMeetingStatus(providerId),
   ]);
   const setup = await getSetupStatus(audio);
   return {
     host: { connected: true, version: appVersion },
     audio,
     chatgpt,
-    dedicatedMeet,
+    protocol: { version: PROTOCOL_VERSION },
+    supportedProviders: supportedMeetingProviders(),
+    dedicatedMeeting,
+    // Compatibility alias for published extensions.
+    dedicatedMeet: dedicatedMeeting,
     configuration: {
       projectConfigured: projectConfigured(),
       extensionId: EXTENSION_ID,
       setupComplete: setup.complete,
     },
     meetingLaunch: getMeetingLaunchState(),
-    meetMicrophone: getMeetMicrophoneState(),
+    participantMicrophone: getParticipantMicrophoneState(),
+    // Compatibility alias for published extensions.
+    meetMicrophone: getParticipantMicrophoneState(),
   };
 }
 
 async function restartVoice() {
-  const meetBefore = await getDedicatedMeetStatus();
+  const meetingBefore = await getDedicatedMeetingStatus();
   await stopVoice();
   const result = await run(resolve(scriptsDir, "open-chatgpt-live.sh"), ["--replace-tab"], 120_000);
-  const meetAfter = await getDedicatedMeetStatus();
-  if (meetBefore.connection === "joined" && meetAfter.connection !== "joined") {
-    throw new Error("Voiceは再起動しましたが、Meet参加状態を維持できませんでした");
+  const meetingAfter = await getDedicatedMeetingStatus();
+  if (meetingBefore.connection === "joined" && meetingAfter.connection !== "joined") {
+    throw new Error("Voiceは再起動しましたが、会議参加状態を維持できませんでした");
   }
   return {
     restarted: true,
-    meetPreserved: meetBefore.connection !== "joined" || meetAfter.connection === "joined",
+    meetingPreserved:
+      meetingBefore.connection !== "joined" || meetingAfter.connection === "joined",
+    meetPreserved:
+      meetingBefore.connection !== "joined" || meetingAfter.connection === "joined",
     output: result.stdout.trim(),
   };
 }
 
-async function toggleMeetMicrophone() {
-  const result = await run(resolve(scriptsDir, "set-meet-mic.sh"), ["toggle"], 15_000);
-  const output = result.stdout.trim();
-  try {
-    return JSON.parse(output);
-  } catch {
-    return { status: "ok", output };
+async function persistParticipantMicrophone(result, providerId) {
+  writeJsonAtomic(micStatePath, {
+    meetingUrl: result.url || getMeetingLaunchState()?.meetingUrl || "",
+    sessionId: getMeetingLaunchState()?.sessionId,
+    providerId,
+    state: result.after,
+    updatedAt: new Date().toISOString(),
+  });
+  return result;
+}
+
+async function setParticipantMicrophone(payload) {
+  const state = payload?.state;
+  assertMicrophoneState(state);
+  const providerId = activeProviderId();
+  const browser = await connectDedicatedChrome();
+  const provider = getMeetingProvider(providerId);
+  const tracked = getParticipantMicrophoneState();
+  const result = await provider.setMicrophone(browser, locatorIsVisible, state, {
+    trackedBefore: tracked?.providerId === providerId ? tracked.state : "",
+  });
+  return persistParticipantMicrophone(result, providerId);
+}
+
+async function toggleParticipantMicrophone() {
+  const providerId = activeProviderId();
+  const status = await getDedicatedMeetingStatus(providerId);
+  const tracked = getParticipantMicrophoneState();
+  const microphone = ["muted", "unmuted"].includes(status.microphone)
+    ? status.microphone
+    : tracked?.providerId === providerId
+      ? tracked.state
+      : "unavailable";
+  if (!["muted", "unmuted"].includes(microphone)) {
+    throw new MeetronError(
+      "MICROPHONE_STATE_UNKNOWN",
+      `${getMeetingProvider(providerId).label}のマイク状態を確認できませんでした`,
+    );
   }
+  return setParticipantMicrophone({
+    state: microphone === "muted" ? "unmuted" : "muted",
+  });
 }
 
 async function restoreAudio() {
@@ -735,43 +758,7 @@ async function restoreAudio() {
   }
 }
 
-async function stopSession() {
-  const warnings = [];
-  let launchCancellation = { cancelled: false, alreadyStopped: true };
-  try {
-    launchCancellation = await cancelMeetingLaunch();
-  } catch (error) {
-    warnings.push(`起動中の処理を停止できませんでした: ${error.message}`);
-  }
-
-  let microphone = { muted: false, alreadyMuted: false };
-  try {
-    const meet = await getDedicatedMeetStatus();
-    if (meet.connection === "joined" && meet.microphone === "unmuted") {
-      const result = await run(resolve(scriptsDir, "set-meet-mic.sh"), ["mute"], 15_000);
-      microphone = { muted: JSON.parse(result.stdout.trim()).verified === true, alreadyMuted: false };
-    } else {
-      microphone = { muted: false, alreadyMuted: meet.microphone === "muted" };
-    }
-  } catch (error) {
-    warnings.push(`GPT参加者をミュートできませんでした: ${error.message}`);
-  }
-
-  let voice = { stopped: false, alreadyStopped: true };
-  try {
-    voice = await stopVoice();
-  } catch (error) {
-    warnings.push(`ChatGPT Voiceを停止できませんでした: ${error.message}`);
-  }
-
-  let meet = { left: false, alreadyLeft: true, tabClosed: false };
-  try {
-    meet = await leaveDedicatedMeet();
-  } catch (error) {
-    warnings.push(`GPT参加者をMeetから退出させられませんでした: ${error.message}`);
-  }
-
-  const audio = await restoreAudio();
+async function persistStoppedSession() {
   const launch = getMeetingLaunchState();
   if (launch) {
     writeJsonAtomic(meetingStatePath, {
@@ -780,18 +767,36 @@ async function stopSession() {
       stoppedAt: new Date().toISOString(),
     });
   }
-  return { stopped: true, launchCancellation, microphone, voice, meet, audio, warnings };
+}
+
+const sessionOrchestrator = new SessionOrchestrator({
+  normalizeMeeting,
+  getProvider: getMeetingProvider,
+  getCurrentState: getMeetingLaunchState,
+  getAudioStatus,
+  createState: createSessionState,
+  launch: launchSession,
+  cancelLaunch: cancelMeetingLaunch,
+  getMeetingStatus: getDedicatedMeetingStatus,
+  setMicrophone: setParticipantMicrophone,
+  stopVoice,
+  leaveMeeting: leaveDedicatedMeeting,
+  restoreAudio,
+  persistStopped: persistStoppedSession,
+});
+
+async function stopSession() {
+  return sessionOrchestrator.stop();
 }
 
 async function runDiagnostics() {
   try {
-    const result = await run(resolve(scriptsDir, "check-env.sh"), [], 30_000);
-    return { ok: true, output: `${result.stdout}${result.stderr}`.trim() };
-  } catch (error) {
-    return {
-      ok: false,
-      output: `${error.stdout || ""}${error.stderr || ""}`.trim() || error.message,
-    };
+    await run(resolve(scriptsDir, "check-env.sh"), [], 30_000);
+    return { ok: true };
+  } catch {
+    // Detailed diagnostics remain available from ./scripts/check-env.sh, but
+    // are not sent through the page overlay or rendered in its UI.
+    return { ok: false };
   }
 }
 
@@ -799,8 +804,12 @@ async function handleMessage(message) {
   switch (message.type) {
     case "ping":
       return { pong: true, extensionId: EXTENSION_ID };
-    case "status.get":
+    case "session.status.get":
       return getStatus();
+    case "session.reconcile":
+      return getDedicatedMeetingStatus();
+    case "meeting.validate":
+      return validateMeeting(message.payload);
     case "setup.status":
       return getSetupStatus();
     case "setup.project.save":
@@ -813,10 +822,14 @@ async function handleMessage(message) {
       return openChatgptSetup();
     case "setup.confirm":
       return confirmSetupStep(message.payload);
-    case "meeting.start":
+    case "session.start":
       return startMeeting(message.payload);
-    case "meet.mic.toggle":
-      return toggleMeetMicrophone();
+    case "participant.mic.toggle":
+      return toggleParticipantMicrophone();
+    case "participant.mic.set":
+      return setParticipantMicrophone(message.payload);
+    case "session.cancel":
+      return cancelMeetingLaunch();
     case "voice.restart":
       return restartVoice();
     case "voice.stop":
@@ -828,7 +841,10 @@ async function handleMessage(message) {
     case "diagnostics.run":
       return runDiagnostics();
     default:
-      throw new Error(`Unsupported Native Host request: ${message.type || "missing type"}`);
+      throw new MeetronError(
+        "COMMAND_UNSUPPORTED",
+        `Unsupported Native Host request: ${message.type || "missing type"}`,
+      );
   }
 }
 
@@ -858,13 +874,18 @@ process.stdin.on("data", (chunk) => {
     const body = input.subarray(4, length + 4);
     input = input.subarray(length + 4);
     queue = queue.then(async () => {
-      let message;
+      let rawMessage;
+      let request;
       try {
-        message = JSON.parse(body.toString("utf8"));
-        const data = await handleMessage(message);
-        sendMessage({ id: message.id, ok: true, data });
+        rawMessage = JSON.parse(body.toString("utf8"));
+        request = normalizeProtocolRequest(rawMessage);
+        const data = await handleMessage(request);
+        sendMessage(createProtocolResponse(request, { data }));
       } catch (error) {
-        sendMessage({ id: message?.id, ok: false, error: error.message });
+        request ||= {
+          requestId: rawMessage?.requestId ?? rawMessage?.id,
+        };
+        sendMessage(createProtocolResponse(request, { error }));
       }
     });
   }

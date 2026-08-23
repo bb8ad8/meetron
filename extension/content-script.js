@@ -1,10 +1,45 @@
 (() => {
   const HOST_ID = "meeting-copilot-controls-root";
-  const MEETING_PATH = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:[/?#]|$)/i;
+  const MEET_PATH = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:[/?#]|$)/i;
+  const ZOOM_PATH = /^\/wc\/\d+\/(?:join|start)(?:[/?#]|$)/i;
+  const hostname = window.location.hostname.toLowerCase();
+  const isMeetPage = hostname === "meet.google.com" && MEET_PATH.test(window.location.pathname);
+  const isZoomPage =
+    (hostname === "zoom.us" || hostname.endsWith(".zoom.us")) &&
+    ZOOM_PATH.test(window.location.pathname);
+  const isDedicatedParticipant =
+    document.documentElement.hasAttribute("data-meetron-dedicated-participant");
 
-  if (!MEETING_PATH.test(window.location.pathname) || document.getElementById(HOST_ID)) {
+  if (!isMeetPage && !isZoomPage) {
     return;
   }
+
+  if (isDedicatedParticipant) {
+    let reconciliationRunning = false;
+    const reconcile = async () => {
+      if (reconciliationRunning || typeof globalThis.chrome?.runtime?.sendMessage !== "function") {
+        return;
+      }
+      reconciliationRunning = true;
+      try {
+        await globalThis.chrome.runtime.sendMessage({
+          channel: "meeting-copilot",
+          type: "native-request",
+          request: { type: "session.reconcile", payload: {} },
+        });
+      } catch {
+        // The next interval retries after Chrome restarts the service worker or
+        // the Native Messaging Host. No meeting-page UI is shown here.
+      } finally {
+        reconciliationRunning = false;
+      }
+    };
+    void reconcile();
+    window.setInterval(reconcile, 2_000);
+    return;
+  }
+
+  if (document.getElementById(HOST_ID)) return;
 
   const iconPaths = {
     activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
@@ -96,19 +131,12 @@
       .footer { margin-top: 9px; display: flex; align-items: center; gap: 6px; min-height: 22px; }
       .message { flex: 1; color: #5f6368; font-size: 11px; overflow-wrap: anywhere; }
       .message.error { color: #c5221f; }
-      .diagnostics {
-        display: none; margin: 8px 0 0; max-height: 120px; overflow: auto;
-        padding: 8px; border-radius: 4px; color: #3c4043; background: #f1f3f4;
-        font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
-      }
-      .diagnostics.visible { display: block; }
       @media (prefers-color-scheme: dark) {
         .panel { color: #e8eaed; background: #202124; border-color: #5f6368; }
         .header { background: #292a2d; border-color: #3c4043; }
         .icon-button { color: #e8eaed; }
         .icon-button:hover, .command:hover { background: #3c4043; }
         .command { color: #e8eaed; background: #292a2d; border-color: #5f6368; }
-        .diagnostics { color: #e8eaed; background: #292a2d; }
       }
     </style>
     <section class="panel" aria-label="Meetron controls">
@@ -139,7 +167,6 @@
           <span class="message" data-message>ローカルホストへ接続しています</span>
           <button class="icon-button" data-refresh type="button" title="状態を更新" aria-label="状態を更新">${icon("refresh")}</button>
         </div>
-        <pre class="diagnostics" data-diagnostics-output></pre>
       </div>
     </section>
   `;
@@ -154,10 +181,9 @@
     restart: shadow.querySelector("[data-restart]"),
     stop: shadow.querySelector("[data-stop]"),
     diagnostics: shadow.querySelector("[data-diagnostics]"),
-    diagnosticsOutput: shadow.querySelector("[data-diagnostics-output]"),
     refresh: shadow.querySelector("[data-refresh]"),
     message: shadow.querySelector("[data-message]"),
-    meetStatus: shadow.querySelector("[data-meet-status]"),
+    participantStatus: shadow.querySelector("[data-meet-status]"),
     voiceStatus: shadow.querySelector("[data-voice-status]"),
     audioStatus: shadow.querySelector("[data-audio-status]"),
   };
@@ -177,9 +203,9 @@
   }
 
   function getParticipantState() {
-    const live = hostStatus?.dedicatedMeet || {};
+    const live = hostStatus?.dedicatedMeeting || hostStatus?.dedicatedMeet || {};
     const launch = hostStatus?.meetingLaunch || {};
-    const tracked = hostStatus?.meetMicrophone || {};
+    const tracked = hostStatus?.participantMicrophone || hostStatus?.meetMicrophone || {};
     const currentMeetingKey = meetingKey(live.url || launch.meetingUrl);
     if (currentMeetingKey !== participantMeetingKey) {
       participantMeetingKey = currentMeetingKey;
@@ -209,6 +235,8 @@
 
     return {
       connection,
+      providerId: live.providerId || launch.providerId || "google-meet",
+      audioConnection: live.audioConnection || "unknown",
       microphone:
         detectedMicrophone === "unavailable"
           ? microphoneOverride || "unavailable"
@@ -227,14 +255,23 @@
   }
 
   function render() {
-    const meet = getParticipantState();
+    const participant = getParticipantState();
+    const launchInProgress = ["starting", "running"].includes(
+      hostStatus?.meetingLaunch?.status,
+    );
+    const zoomAudioPending =
+      participant.providerId === "zoom-web" &&
+      participant.connection === "joined" &&
+      participant.audioConnection !== "connected";
     const joinedLabel =
-      meet.microphone === "muted"
+      zoomAudioPending
+        ? ["参加中・音声接続待ち", ""]
+        : participant.microphone === "muted"
         ? ["参加中・ミュート", "good"]
-        : meet.microphone === "unmuted"
+        : participant.microphone === "unmuted"
           ? ["参加中・送話中", "good"]
           : ["参加中・状態不明", ""];
-    const meetLabels = {
+    const connectionLabels = {
       joined: joinedLabel,
       waiting: ["承認待ち", ""],
       rejected: ["参加拒否", "bad"],
@@ -244,18 +281,21 @@
       stopped: ["終了済み", ""],
       "not-running": ["未起動", ""],
     };
-    setValue(elements.meetStatus, ...(meetLabels[meet.connection] || ["状態不明", ""]));
+    setValue(
+      elements.participantStatus,
+      ...(connectionLabels[participant.connection] || ["状態不明", ""]),
+    );
 
-    const muted = meet.microphone === "muted";
-    const microphoneKnown = ["muted", "unmuted"].includes(meet.microphone);
+    const muted = participant.microphone === "muted";
+    const microphoneKnown = ["muted", "unmuted"].includes(participant.microphone);
     const micLabel = muted ? "ミュート解除" : "ミュート";
     elements.mic.innerHTML = `${icon(muted ? "micOff" : "mic")}<span>${micLabel}</span>`;
     elements.mic.classList.toggle("primary", muted);
     const nativeToggleAvailable =
-      meet.connection === "joined" && microphoneKnown && Boolean(hostStatus);
+      participant.connection === "joined" && microphoneKnown && Boolean(hostStatus);
     elements.mic.disabled = !nativeToggleAvailable || busy;
     elements.micQuick.innerHTML = icon(muted ? "micOff" : "mic");
-    elements.micQuick.classList.toggle("danger", meet.microphone === "unmuted");
+    elements.micQuick.classList.toggle("danger", participant.microphone === "unmuted");
     elements.micQuick.disabled = !nativeToggleAvailable || busy;
     elements.micQuick.title = muted
       ? "GPT参加者のミュートを解除"
@@ -278,16 +318,31 @@
         ? voiceRoutingReady
           ? "起動中"
           : "出力異常"
-        : voice.browserConnected
-          ? "停止中"
-          : "未接続",
-      voiceHealthy ? "good" : "bad",
+        : launchInProgress
+          ? "起動中"
+          : voice.browserConnected
+            ? "停止中"
+            : "未接続",
+      voiceHealthy ? "good" : launchInProgress ? "" : "bad",
     );
     const audio = hostStatus.audio || {};
-    const audioReady = audio.ready && (!voice.voiceActive || voiceRoutingReady);
-    setValue(elements.audioStatus, audioReady ? "正常" : "要確認", audioReady ? "good" : "bad");
+    const audioReady =
+      audio.ready &&
+      !zoomAudioPending &&
+      (!voice.voiceActive || voiceRoutingReady);
+    setValue(
+      elements.audioStatus,
+      launchInProgress
+        ? "準備中"
+        : zoomAudioPending ? "Zoomへ接続中" : audioReady ? "正常" : "要確認",
+      audioReady ? "good" : launchInProgress || zoomAudioPending ? "" : "bad",
+    );
 
-    const ready = meet.connection === "joined" && voiceHealthy && audioReady;
+    const ready =
+      participant.connection === "joined" &&
+      !zoomAudioPending &&
+      voiceHealthy &&
+      audioReady;
     elements.dot.className = `status-dot ${ready ? "ready" : ""}`;
   }
 
@@ -321,28 +376,31 @@
   }
 
   async function toggleMicrophone() {
-    const meet = getParticipantState();
+    const participant = getParticipantState();
     busy = true;
     render();
     try {
-      if (!hostStatus || meet.connection !== "joined") {
-        throw new Error("GPT参加者はMeetに参加していません");
+      if (!hostStatus || participant.connection !== "joined") {
+        throw new Error("GPT参加者は会議に参加していません");
       }
-      const result = await nativeRequest("meet.mic.toggle");
+      const result = await nativeRequest("participant.mic.toggle");
       if (result?.verified !== true) {
-        throw new Error("Meetのマイク状態を確認できませんでした");
+        throw new Error("会議のマイク状態を確認できませんでした");
       }
       if (["muted", "unmuted"].includes(result.after)) {
         microphoneOverride = result.after;
-        hostStatus.meetMicrophone = {
+        hostStatus.participantMicrophone = {
           meetingUrl: result.url || hostStatus.meetingLaunch?.meetingUrl,
           state: result.after,
         };
-        hostStatus.dedicatedMeet = {
-          ...(hostStatus.dedicatedMeet || {}),
+        hostStatus.dedicatedMeeting = {
+          ...(hostStatus.dedicatedMeeting || hostStatus.dedicatedMeet || {}),
           connection: "joined",
           microphone: result.after,
-          url: result.url || hostStatus.dedicatedMeet?.url,
+          url:
+            result.url ||
+            hostStatus.dedicatedMeeting?.url ||
+            hostStatus.dedicatedMeet?.url,
         };
         setMessage(
           result.after === "muted"
@@ -404,8 +462,6 @@
     setMessage("環境を診断しています");
     try {
       const result = await nativeRequest("diagnostics.run");
-      elements.diagnosticsOutput.textContent = result.output;
-      elements.diagnosticsOutput.classList.add("visible");
       setMessage(result.ok ? "診断が完了しました" : "診断で問題が見つかりました", !result.ok);
     } catch (error) {
       setMessage(error.message, true);

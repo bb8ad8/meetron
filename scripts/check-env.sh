@@ -55,11 +55,10 @@ fi
 if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
   node_version="$(node --version)"
   node_major="$(printf '%s' "$node_version" | sed 's/^v//' | cut -d. -f1)"
-  if [ "$node_major" -ge 22 ]; then
-    ok "Node.js: $node_version, npm: $(npm --version)"
-  else
-    missing "Node.js 22 or later is required (found $node_version)."
-  fi
+  case "$node_major" in
+    22|24) ok "Node.js: $node_version, npm: $(npm --version)" ;;
+    *) missing "Node.js 22 or 24 LTS is required (found $node_version)." ;;
+  esac
 else
   missing 'Node.js and npm were not found.'
 fi

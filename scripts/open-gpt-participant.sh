@@ -9,6 +9,7 @@ join_delay="${MEETING_COPILOT_JOIN_DELAY:-2}"
 restart_profile=0
 manual_join_required=0
 meeting_url=''
+url_stdin=0
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 environment_cdp_port="${MEETING_COPILOT_CDP_PORT:-}"
 
@@ -34,17 +35,18 @@ Environment variables:
   MEETING_COPILOT_JOIN_DELAY    Seconds to wait before admission request (default: 2).
 
 Options:
-  --auto-prepare       Grant Meet microphone permission and dismiss onboarding.
-  --join               Prepare Meet and request admission automatically.
+  --auto-prepare       Configure the selected provider without joining.
+  --join               Prepare and request admission automatically.
   --join-delay SEC     Override the delay before requesting admission.
   --restart-profile    Restart the whole shared profile; this also closes ChatGPT.
+  --url-stdin          Read the meeting invitation URL from standard input.
   --dry-run            Print the launch command without opening Chrome.
 
 Examples:
   ./scripts/open-gpt-participant.sh https://meet.google.com/xxx-yyyy-zzz
   ./scripts/open-gpt-participant.sh --auto-prepare --restart-profile https://meet.google.com/xxx-yyyy-zzz
   ./scripts/open-gpt-participant.sh --join --restart-profile https://meet.google.com/xxx-yyyy-zzz
-  ./scripts/open-gpt-participant.sh https://zoom.us/j/123456789
+  ./scripts/open-gpt-participant.sh --join https://zoom.us/j/123456789
 EOF
 }
 
@@ -67,6 +69,9 @@ while [ "$#" -gt 0 ]; do
     --restart-profile)
       restart_profile=1
       ;;
+    --url-stdin)
+      url_stdin=1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -88,6 +93,14 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+if [ "$url_stdin" -eq 1 ]; then
+  if [ -n "$meeting_url" ]; then
+    printf 'Do not combine --url-stdin with a positional meeting URL.\n' >&2
+    exit 2
+  fi
+  IFS= read -r meeting_url
+fi
+
 case "$join_delay" in
   ''|*[!0-9]*)
     printf '%s\n' '--join-delay must be a non-negative integer.' >&2
@@ -101,24 +114,43 @@ if [ -z "$meeting_url" ]; then
   exit 2
 fi
 
-case "$meeting_url" in
-  https://meet.google.com/*)
-    meeting_provider='Google Meet'
-    ;;
-  https://zoom.us/j/*|https://zoom.us/wc/*|https://*.zoom.us/j/*|https://*.zoom.us/wc/*)
-    meeting_provider='Zoom'
-    ;;
-  *)
-    printf 'Unsupported meeting URL: %s\n' "$meeting_url" >&2
-    printf 'Only HTTPS Google Meet and Zoom meeting URLs are accepted.\n' >&2
-    exit 2
-    ;;
-esac
-
-if [ "$auto_prepare" -eq 1 ] && [ "$meeting_provider" != 'Google Meet' ]; then
-  printf 'Automated preparation currently supports Google Meet only.\n' >&2
-  exit 2
+set +e
+meeting_provider_data="$(printf '%s' "$meeting_url" | node --input-type=module -e '
+  import { readFileSync } from "node:fs";
+  import { pathToFileURL } from "node:url";
+    const { getMeetingProvider, normalizeMeeting } = await import(pathToFileURL(`${process.argv[1]}/src/providers/provider-registry.mjs`));
+    const { createProviderPreparationPlan } = await import(pathToFileURL(`${process.argv[1]}/src/providers/provider-automation.mjs`));
+  try {
+    const meeting = normalizeMeeting(readFileSync(0, "utf8").trim());
+    const provider = getMeetingProvider(meeting.providerId);
+    const plan = createProviderPreparationPlan(provider, meeting, {
+      cdp: "http://127.0.0.1:9223",
+      participantName: "GPT-Live",
+    });
+    process.stdout.write([
+      meeting.providerId,
+      meeting.displayUrl,
+      provider.label,
+      plan.preparationScript,
+      plan.urlTransport,
+      String(provider.automation.supportsJoinDelay),
+      plan.initialUrl,
+    ].join("\n"));
+  }
+  catch (error) { process.stderr.write(`${error.message}\n`); process.exit(2); }
+' "$repo_root")"
+provider_status=$?
+set -e
+if [ "$provider_status" -ne 0 ]; then
+  exit "$provider_status"
 fi
+meeting_provider_id="$(printf '%s\n' "$meeting_provider_data" | sed -n '1p')"
+meeting_display_url="$(printf '%s\n' "$meeting_provider_data" | sed -n '2p')"
+meeting_provider="$(printf '%s\n' "$meeting_provider_data" | sed -n '3p')"
+preparation_script="$(printf '%s\n' "$meeting_provider_data" | sed -n '4p')"
+url_transport="$(printf '%s\n' "$meeting_provider_data" | sed -n '5p')"
+supports_join_delay="$(printf '%s\n' "$meeting_provider_data" | sed -n '6p')"
+launch_url="$(printf '%s\n' "$meeting_provider_data" | sed -n '7p')"
 
 find_chrome() {
   for app_path in \
@@ -158,13 +190,17 @@ chrome_binary="${chrome_binary%.app}"
 if [ "$dry_run" -eq 1 ]; then
   if [ "$auto_prepare" -eq 1 ]; then
     printf '[DRY RUN] open -na %q --args --remote-debugging-address=127.0.0.1 --remote-debugging-port=%q --use-fake-ui-for-media-stream --user-data-dir=%q --no-first-run --new-window %q\n' \
-      "$chrome_path" "$cdp_port" "$profile_dir" "$meeting_url"
+      "$chrome_path" "$cdp_port" "$profile_dir" "$launch_url"
   else
     printf '[DRY RUN] open -na %q --args --user-data-dir=%q --no-first-run --new-window %q\n' \
-      "$chrome_path" "$profile_dir" "$meeting_url"
+      "$chrome_path" "$profile_dir" "$launch_url"
   fi
   if [ "$join_meeting" -eq 1 ]; then
-    printf '[DRY RUN] prepare Meet, wait %s seconds, and request admission\n' "$join_delay"
+    if [ "$supports_join_delay" = 'true' ]; then
+      printf '[DRY RUN] prepare Meet, wait %s seconds, and request admission\n' "$join_delay"
+    else
+      printf '[DRY RUN] prepare %s and request admission\n' "$meeting_provider"
+    fi
   fi
   exit 0
 fi
@@ -188,7 +224,7 @@ dedicated_endpoint_ready() {
 }
 
 if [ ! -d "$repo_root/node_modules/playwright-core" ]; then
-  printf 'playwright-core is required. Run: npm install\n' >&2
+  printf 'playwright-core is required. Run: npm ci\n' >&2
   exit 1
 fi
 
@@ -224,7 +260,7 @@ if [ "$launch_chrome" -eq 1 ]; then
     "--user-data-dir=$profile_dir" \
     --no-first-run \
     --new-window \
-    "$meeting_url"
+    "$launch_url"
 fi
 
 attempts=0
@@ -241,15 +277,25 @@ if [ "$auto_prepare" -eq 1 ]; then
   prepare_args=(
     --cdp "http://127.0.0.1:$cdp_port"
     --name "$participant_name"
-    --url "$meeting_url"
   )
+  if [ "$url_transport" = 'argument' ]; then
+    prepare_args+=(--url "$meeting_url")
+  else
+    prepare_args+=(--url-stdin)
+  fi
   if [ "$join_meeting" -eq 1 ]; then
-    prepare_args+=(--join --join-delay "$join_delay")
+    prepare_args+=(--join)
+    if [ "$supports_join_delay" = 'true' ]; then
+      prepare_args+=(--join-delay "$join_delay")
+    fi
   fi
 
   set +e
-  node "$repo_root/scripts/prepare-meet.mjs" \
-    "${prepare_args[@]}"
+  if [ "$url_transport" = 'argument' ]; then
+    node "$repo_root/scripts/$preparation_script" "${prepare_args[@]}"
+  else
+    printf '%s' "$meeting_url" | node "$repo_root/scripts/$preparation_script" "${prepare_args[@]}"
+  fi
   prepare_status=$?
   set -e
 
@@ -276,15 +322,33 @@ if [ "$auto_prepare" -eq 1 ]; then
       ;;
   esac
 else
-  if [ "$launch_chrome" -eq 0 ]; then
-    node "$repo_root/scripts/open-chrome-page.mjs" \
-      --cdp "http://127.0.0.1:$cdp_port" \
-      --url "$meeting_url" >/dev/null
-  fi
+  printf '%s' "$meeting_url" | node "$repo_root/scripts/open-chrome-page.mjs" \
+    --cdp "http://127.0.0.1:$cdp_port" \
+    --url-stdin >/dev/null
 fi
 
 if [ "$auto_prepare" -eq 1 ]; then
-  if [ "$join_meeting" -eq 1 ]; then
+  if [ "$meeting_provider_id" = 'zoom-web' ]; then
+    if [ "$manual_join_required" -eq 1 ]; then
+      cat <<EOF
+
+Zoom needs one manual confirmation, so the dedicated Chrome window remains open.
+Verify microphone "Meetron: AI to Meeting", speaker "Meetron: Meeting to AI", and muted state.
+If the pre-join button is visible, click it once; otherwise wait for host approval.
+EOF
+    elif [ "$join_meeting" -eq 1 ]; then
+      cat <<EOF
+
+Zoom admission was requested with Meetron audio routing enabled.
+The meeting microphone remains muted until it is explicitly enabled.
+EOF
+    else
+      cat <<EOF
+
+Zoom is prepared with Meetron audio routing. Verify the preview and join when ready.
+EOF
+    fi
+  elif [ "$join_meeting" -eq 1 ]; then
     if [ "$manual_join_required" -eq 1 ]; then
       cat <<EOF
 

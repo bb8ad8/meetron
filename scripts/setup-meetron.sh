@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 check_only=0
 release_url="${MEETRON_SETUP_RELEASE_URL:-https://github.com/bb8ad8/meetron/releases/latest}"
 receipt_id="${MEETRON_SETUP_RECEIPT_ID:-io.github.bb8ad8.meetron.audio.pkg}"
+required_audio_version="${MEETRON_SETUP_AUDIO_VERSION:-0.1.2}"
 no_open="${MEETRON_SETUP_NO_OPEN:-0}"
 
 usage() {
@@ -84,6 +85,20 @@ find_audio_pkg() {
   fi
 
   for candidate in \
+    "$repo_root/MeetronAudio-$required_audio_version.pkg" \
+    "$repo_root/installer/MeetronAudio-$required_audio_version.pkg" \
+    "$repo_root/../installer/MeetronAudio-$required_audio_version.pkg" \
+    "$repo_root/dist/release/MeetronAudio-$required_audio_version.pkg" \
+    "$repo_root/dist/MeetronAudio-$required_audio_version.pkg" \
+    "$HOME/Downloads/MeetronAudio-$required_audio_version.pkg" \
+    "$HOME/Desktop/MeetronAudio-$required_audio_version.pkg"; do
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  for candidate in \
     "$repo_root"/MeetronAudio-*.pkg \
     "$repo_root"/installer/MeetronAudio-*.pkg \
     "$repo_root"/../installer/MeetronAudio-*.pkg \
@@ -97,6 +112,21 @@ find_audio_pkg() {
     fi
   done
   return 0
+}
+
+version_at_least() {
+  installed="$1"
+  required="$2"
+  /usr/bin/awk -v installed="$installed" -v required="$required" 'BEGIN {
+    split(installed, actual, ".")
+    split(required, wanted, ".")
+    for (segment = 1; segment <= 3; segment++) {
+      if (actual[segment] !~ /^[0-9]+$/ || wanted[segment] !~ /^[0-9]+$/) exit 1
+      if ((actual[segment] + 0) > (wanted[segment] + 0)) exit 0
+      if ((actual[segment] + 0) < (wanted[segment] + 0)) exit 1
+    }
+    exit 0
+  }'
 }
 
 verify_audio_pkg() {
@@ -179,7 +209,18 @@ fi
 
 if pkgutil --pkg-info "$receipt_id" >/dev/null 2>&1; then
   audio_version="$(pkgutil --pkg-info "$receipt_id" 2>/dev/null | sed -n 's/^version: //p')"
-  printf '[OK] Meetron Audio PKG is installed%s.\n' "${audio_version:+ ($audio_version)}"
+  if [ -n "$audio_version" ] && version_at_least "$audio_version" "$required_audio_version"; then
+    printf '[OK] Meetron Audio PKG is installed (%s).\n' "$audio_version"
+  else
+    printf '[UPDATE] Meetron Audio %s is required (installed: %s).\n' \
+      "$required_audio_version" "${audio_version:-unknown}"
+    if guide_audio_install; then
+      exit 0
+    else
+      status=$?
+      exit "$status"
+    fi
+  fi
 else
   if guide_audio_install; then
     exit 0
@@ -197,10 +238,13 @@ if [ -z "$node_binary" ] || [ -z "$npm_binary" ]; then
 fi
 node_version="$($node_binary --version)"
 node_major="$(printf '%s' "$node_version" | sed 's/^v//' | cut -d. -f1)"
-if [ "$node_major" -lt 22 ]; then
-  printf '[ERROR] Node.js 22 or later is required (found %s).\n' "$node_version" >&2
-  exit 1
-fi
+case "$node_major" in
+  22|24) ;;
+  *)
+    printf '[ERROR] Node.js 22 or 24 LTS is required (found %s).\n' "$node_version" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -d '/Applications/Google Chrome.app' ] && [ ! -d "$HOME/Applications/Google Chrome.app" ]; then
   printf '[ERROR] Google Chrome was not found. Install the official Google Chrome build first.\n' >&2

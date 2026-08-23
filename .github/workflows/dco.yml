@@ -1,0 +1,21 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  signoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require DCO sign-off on every pull request commit
+        run: >-
+          node scripts/check-dco.mjs
+          '${{ github.event.pull_request.base.sha }}'
+          '${{ github.event.pull_request.head.sha }}'

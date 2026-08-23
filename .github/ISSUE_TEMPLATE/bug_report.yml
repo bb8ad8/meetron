@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible Meetron Community problem without confidential data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include meeting URLs, Zoom passcodes, Project IDs, cookies, account names, authentication data, or unredacted logs. Security vulnerabilities must use private reporting described in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Meetron version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, Apple Silicon or Intel, Chrome version, Node.js version, and audio backend.
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Meeting provider
+      options:
+        - Google Meet
+        - Zoom Web App
+        - Setup or update
+        - Audio backend
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use a non-confidential test meeting and redact every identifier.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result and redacted diagnostics
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed meeting URLs, passcodes, account data, cookies, credentials, and Project identifiers.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

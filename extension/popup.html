@@ -31,7 +31,15 @@
 
       <section data-launch-view hidden>
         <form data-start-form novalidate>
-          <label for="meeting-url">Google Meet URL</label>
+          <div class="provider-picker" role="radiogroup" aria-label="会議サービス">
+            <button class="provider-option selected" data-provider="google-meet" type="button" role="radio" aria-checked="true">
+              <span>Google Meet</span><small>既定</small>
+            </button>
+            <button class="provider-option" data-provider="zoom-web" type="button" role="radio" aria-checked="false">
+              <span>Zoom</span><small>任意</small>
+            </button>
+          </div>
+          <label for="meeting-url" data-meeting-url-label>Google Meet URL</label>
           <div class="input-row">
             <input
               id="meeting-url"
@@ -53,9 +61,42 @@
           <p class="message" data-message>Meet URLを入力してGPT参加者を起動します</p>
         </form>
 
+        <section class="start-guide" data-provider-guide="google-meet">
+          <div class="guide-heading"><strong>Google Meet スタートガイド</strong><span>自動</span></div>
+          <ol>
+            <li>MeetのURLを貼り付けて「開始」</li>
+            <li>専用Chromeが参加準備と音声設定を実行</li>
+            <li>ホストが許可するとGPT参加者が入室</li>
+          </ol>
+        </section>
+
+        <section class="start-guide zoom-guide" data-provider-guide="zoom-web" hidden>
+          <div class="guide-heading"><strong>Zoom スタートガイド</strong><span>ベータ</span></div>
+          <ol>
+            <li>Zoomの招待URLを貼り付けて「開始」</li>
+            <li>専用Chromeが「ブラウザから参加」を選択</li>
+            <li><code>GPT-Live</code>、カメラオフ、ミュートを自動設定</li>
+            <li>マイクを <code data-zoom-microphone>Meetron: AI to Meeting</code>、スピーカーを <code data-zoom-speaker>Meetron: Meeting to AI</code> に固定</li>
+            <li>ホストの許可後もミュートのまま待機</li>
+          </ol>
+          <p>自動判定できない場合だけ専用Chromeを確認してください。招待URLのパスコードは保存しません。</p>
+        </section>
+
         <section class="launch" data-launch hidden>
           <span>前回の起動</span>
           <strong data-launch-status></strong>
+        </section>
+
+        <section class="session-controls" data-session-controls hidden>
+          <div class="session-summary">
+            <span data-session-provider>会議</span>
+            <strong data-session-connection>状態確認中</strong>
+          </div>
+          <div class="session-actions">
+            <button data-session-mic type="button">マイク切替</button>
+            <button class="secondary" data-session-voice type="button">Voice再起動</button>
+            <button class="secondary danger" data-session-stop type="button">終了</button>
+          </div>
         </section>
       </section>
 
@@ -143,7 +184,7 @@
             </span>
             <h2>セットアップ完了</h2>
             <p class="step-copy">Meetronを起動できます。</p>
-            <button class="wide" data-finish-setup type="button">Meet起動へ</button>
+            <button class="wide" data-finish-setup type="button">会議起動へ</button>
           </section>
         </div>
 

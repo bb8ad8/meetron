@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let messageListener;
+let nativeMessageListener;
 let nativeConnections = 0;
 
 const chrome = {
@@ -16,9 +17,11 @@ const chrome = {
     connectNative: () => {
       nativeConnections += 1;
       return {
-        onMessage: { addListener: () => {} },
+        onMessage: { addListener: (listener) => { nativeMessageListener = listener; } },
         onDisconnect: { addListener: () => {} },
-        postMessage: () => {},
+        postMessage: (message) => {
+          nativeMessageListener?.({ ...message, ok: true, data: {} });
+        },
       };
     },
     onMessage: {
@@ -56,6 +59,10 @@ const invalidMeetPath = request("status.get", {
   id: chrome.runtime.id,
   url: "https://meet.google.com/landing",
 });
+const invalidZoomPath = request("status.get", {
+  id: chrome.runtime.id,
+  url: "https://app.zoom.us/profile",
+});
 
 if (
   foreign.asynchronous !== false ||
@@ -64,9 +71,47 @@ if (
   privilegedFromMeet.response?.ok !== false ||
   invalidMeetPath.asynchronous !== false ||
   invalidMeetPath.response?.ok !== false ||
+  invalidZoomPath.asynchronous !== false ||
+  invalidZoomPath.response?.ok !== false ||
   nativeConnections !== 0
 ) {
   throw new Error("Service worker accepted an unauthorized Native Host request.");
+}
+
+let zoomResponse;
+const zoomAsynchronous = messageListener(
+  {
+    channel: "meeting-copilot",
+    type: "native-request",
+    request: { type: "participant.mic.toggle", payload: {} },
+  },
+  {
+    id: chrome.runtime.id,
+    url: "https://app.zoom.us/wc/12345678901/join",
+  },
+  (value) => { zoomResponse = value; },
+);
+await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+if (zoomAsynchronous !== true || zoomResponse?.ok !== true || nativeConnections !== 1) {
+  throw new Error("Service worker rejected an authorized Zoom meeting control request.");
+}
+
+let reconcileResponse;
+const reconcileAsynchronous = messageListener(
+  {
+    channel: "meeting-copilot",
+    type: "native-request",
+    request: { type: "session.reconcile", payload: {} },
+  },
+  {
+    id: chrome.runtime.id,
+    url: "https://app.zoom.us/wc/12345678901/join",
+  },
+  (value) => { reconcileResponse = value; },
+);
+await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+if (reconcileAsynchronous !== true || reconcileResponse?.ok !== true) {
+  throw new Error("Service worker rejected the dedicated Zoom reconciliation request.");
 }
 
 process.stdout.write("Service worker sender authorization passed.\n");

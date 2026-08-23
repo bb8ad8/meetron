@@ -4,9 +4,15 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#動作環境)
 
-ChatGPT Web Voiceを、Google Meetへ`GPT-Live`という別参加者として接続するmacOS向けの実験的ベータ版です。OpenAI APIは使わず、Meetron専用の仮想音声デバイスで会議音声とChatGPT音声を双方向に橋渡しします。
+ChatGPT Web Voiceを、Google Meetまたは任意のZoom Web Appへ`GPT-Live`という別参加者として接続するmacOS向けの実験的ベータ版です。OpenAI APIは使わず、Meetron専用の仮想音声デバイスで会議音声とChatGPT音声を双方向に橋渡しします。既定はGoogle Meetで、Zoom対応はベータ機能です。
 
-このプロジェクトは非公式であり、OpenAI、Apple、Googleの提供・承認を受けた製品ではありません。ChatGPTとGoogle Meetの画面変更により、自動化が動かなくなる可能性があります。
+このプロジェクトは非公式であり、OpenAI、Apple、Google、Zoomの提供・承認を受けた製品ではありません。ChatGPT、Google Meet、Zoomの画面変更により、自動化が動かなくなる可能性があります。
+
+## OSS Community版について
+
+このリポジトリは、構成を理解して自力またはローカル操作対応のAIアシスタントで導入・診断できる利用者向けの、source-firstなCommunity版です。Git、Node.js、Chromeのデベロッパーモード、macOSの署名・権限を扱います。一般消費者向けの公証済みデスクトップアプリ、自動アップデート、Chrome Web Store版、Windows版、組織管理、SLAは現在のOSSリリースには含まれません。
+
+対応範囲とIssueを開く前の確認は[SUPPORT.md](SUPPORT.md)、変更点は[CHANGELOG.md](CHANGELOG.md)を参照してください。
 
 ## 非エンジニア向け最短手順
 
@@ -25,6 +31,10 @@ https://github.com/bb8ad8/meetron のMeetronをこのMacへcloneし、READMEの�
 
 詳しいAI向け依頼文と役割分担は[AIアシスタントによるセットアップ](#aiアシスタントによるセットアップ推奨)にあります。
 
+すでにMeeting Copilot／Meetronを利用している場合は、GitHubから最新ソースをcloneするか、`Code` > `Download ZIP`で取得・展開し、その新しいフォルダ内の`Meetron Update.command`をダブルクリックします。現在利用中の旧フォルダを自動検出して同じ場所を更新するため、Chrome拡張フォルダの選び直しやChatGPT Project URLの再入力は不要です。Meetron Audio利用者には署名・公証済みPKGの更新とMac再起動を案内し、BlackHole 2ch / 16ch利用者は既存の音声構成を変更せず、Chrome再起動だけを案内します。
+
+AirDropやブラウザから取得したソースでは、未署名の`.command`がmacOSに止められる場合があります。これは署名・公証済みのMeetron Audio PKGとは別の、ソース配布スクリプトに対するGatekeeperの確認です。[`.command`が開けない場合](#commandが開けない場合)に従うか、ターミナルから同等のスクリプトを実行してください。
+
 ## 動作環境
 
 - macOS 13以降（実機はmacOS 26 / Apple Siliconで確認）
@@ -37,7 +47,7 @@ Intel MacとmacOS 13〜15では未検証のベストエフォート対応です�
 
 ## Meetron Setup.commandが行うこと
 
-GitHubからcloneした後は、Finderでリポジトリを開き、`Meetron Setup.command`をダブルクリックします。セットアップは現在の状態を判定し、次に必要な操作だけを表示します。
+GitHubからcloneした後は、Finderでリポジトリを開き、`Meetron Setup.command`をダブルクリックします。ターミナルを利用する場合は`./scripts/setup-meetron.sh`を実行できます。セットアップは現在の状態を判定し、次に必要な操作だけを表示します。
 
 - Meetron Audioが未導入: ダウンロード済みの正規PKGを探し、Appleの署名・公証を確認してFinderとインストーラを開く
 - PKGがまだない: GitHub ReleasesとFinderのダウンロードフォルダを開く
@@ -46,14 +56,43 @@ GitHubからcloneした後は、Finderでリポジトリを開き、`Meetron Set
 
 PKGは開発元が`Yuki Inaba`であることを自動確認します。パスワードやTouch IDはMeetronやAIチャットへ入力せず、macOSのインストーラ画面へ直接入力してください。途中で画面を閉じても、同じ`Meetron Setup.command`をもう一度開けば続きから判定します。
 
+## Meetron Update.commandが行うこと
+
+既存ユーザーは、GitHubからcloneまたは`Code` > `Download ZIP`で取得した新しいソースフォルダで`Meetron Update.command`をダブルクリックします。更新プログラムはNative Messaging Hostの登録から現在Chromeが利用しているMeetronフォルダを特定し、その同じパスへ新しいファイルをコピーします。
+
+- `.meeting-copilot.env`、`.meeting-copilot-runtime`、Git履歴、専用Chromeプロファイル、Google／ChatGPTログイン状態を保持
+- 更新前のソースを`~/Library/Application Support/Meetron/Backups/`へ退避
+- Gitで管理しているファイルに未コミット変更がある場合は、上書きせず停止
+- Node.js依存関係とNative Messaging Hostを更新
+- Meetron Audioが古い場合だけ、新しいPKGの署名、公証、チェックサムを検証してインストーラを開く
+- BlackHoleまたは旧内製ドライバが正常に動いている場合は、その音声バックエンドを維持してPKGを強制しない
+
+Meetron Audioを更新した場合はMacを再起動します。BlackHoleを維持した場合は、Google Chromeを終了して再度開くだけで拡張`0.9.0`が読み込まれます。更新元として使った新しい配布フォルダは、更新完了後に削除して構いません。
+
+### `.command`が開けない場合
+
+`Meetron Setup.command`と`Meetron Update.command`はOSSソースに含まれるシェルスクリプトであり、Developer ID署名・Apple公証されたアプリではありません。AirDrop、ブラウザダウンロード、ZIP展開によって隔離属性が付くと、macOSが「開発元が未確認」と表示する場合があります。
+
+入手元と内容を確認した上で実行する場合は、一度開こうとした後に「システム設定」>「プライバシーとセキュリティ」>「セキュリティ」から「このまま開く」を選びます。Appleの説明は[開発元が不明なMacアプリを開く](https://support.apple.com/ja-jp/guide/mac-help/mh40616/mac)を参照してください。Gatekeeper全体を無効化したり、ダウンロードフォルダ全体の隔離属性を削除したりしないでください。
+
+ソースを確認できる利用者は、リポジトリ直下で次を実行する方法もあります。
+
+```bash
+./scripts/setup-meetron.sh
+./scripts/update-meetron.sh --dry-run
+```
+
+実際の更新は、新しい配布フォルダから`./scripts/update-meetron.sh`を引数なしで実行します。`--dry-run`は既存インストールの検出と安全確認だけを行います。
+
 ## 現在のスコープ
 
-- Google Meetへの統合参加を自動化。Zoom Web Clientは低レベル起動のみ試験的に対応
+- Google Meetへの統合参加を自動化
+- Zoom Web Appは任意のベータ機能として、URL自動判定、専用Chrome起動、ブラウザ参加、表示名、Meetron音声経路、カメラオフ、参加前ミュート、参加要求、待機／参加状態、マイク、退出を自動化
 - 会議URL、初回マイク案内、表示名、音声デバイス、参加前ミュートを自動設定
 - ChatGPT Projectでの新規チャット作成とVoice開始を自動設定
 - 拡張の`開始`と統合起動では参加リクエストまで自動化。低レベル起動では`--join`指定時のみ自動化
 - 発話抑制はProject instructionsと会議側ミュートで行う
-- 普段使うChromeのMeet上に表示する小型UIから、GPT参加者の接続確認、マイク、Voice、セッション終了、環境診断を遠隔操作
+- 普段使うChromeのGoogle Meet／Zoom上に表示する小型UIから、GPT参加者の接続確認、マイク、Voice、セッション終了、環境診断を遠隔操作
 
 旧公開版から更新するユーザーに限り、BlackHole 2ch / 16chを移行期間中の互換バックエンドとして自動検出します。新規セットアップではBlackHoleを導入しません。Meetronは既存のBlackHoleを削除・変更しないため、ほかのアプリで引き続き利用できます。
 
@@ -61,15 +100,15 @@ PKGは開発元が`Yuki Inaba`であることを自動確認します。パス�
 
 ```text
 会議参加者の音声
-  -> 専用ChromeのGPT参加者Meet
-  -> Meet speaker: Meetron: Meeting to AI
+  -> 専用ChromeのGPT参加者（Meet / Zoom）
+  -> 会議speaker: Meetron: Meeting to AI
   -> 専用ChromeのChatGPT Voice input: Meetron: Meeting to AI
 
 ChatGPT Voice output
   -> ChatGPT VoiceタブだけをMeetron: AI to Meetingへ出力
-  -> GPT参加者Meet mic: Meetron: AI to Meeting
-  -> Google Meet
-  -> 通常ChromeのMeet
+  -> GPT参加者の会議mic: Meetron: AI to Meeting
+  -> Google Meet / Zoom Web App
+  -> 利用者が参加している会議
   -> 現在の物理出力（ヘッドホン／スピーカー）
 ```
 
@@ -123,10 +162,11 @@ README.mdを最初から最後まで読み、現在のGit状態、macOS、チッ
 - 私のローカル変更があれば上書きせず、内容を説明してから安全な対処を相談する
 - .meeting-copilot.env、.meeting-copilot-runtime、専用Chromeプロファイル、拡張機能ID、Native Messaging Host IDを削除・改名しない
 - GoogleとChatGPTのログイン状態をできる限り保持する
-- Git更新はgit pull --ff-onlyを基本にし、リセット、強制チェックアウト、履歴の書き換えをしない
-- GitHub Releasesから最新の署名・公証済みMeetronAudio-*.pkgを取得し、SHA-256、Appleの署名、公証結果を確認する
-- PKGの表示上の開発元が「Yuki Inaba」であることを説明し、管理者認証と再起動は私に依頼する
-- 再起動後に「Meetron Setup.command」または./scripts/setup-meetron.shを実行する
+- Git更新はgit pull --ff-onlyを基本にし、リセット、強制チェックアウト、履歴の書き換えをしない。配布ZIPを使う場合はMeetron Update.commandまたは./scripts/update-meetron.shを使う
+- BlackHole 2ch / 16chが正常な既存バックエンドなら削除・更新・設定変更せず、そのまま維持する
+- Meetron Audioが導入済みで古い場合、または互換音声バックエンドが存在しない場合だけ、GitHub ReleasesのMeetronAudio-*.pkgについてSHA-256、Appleの署名、公証結果を確認する
+- PKGが必要な場合だけ、表示上の開発元が「Yuki Inaba」であることを説明し、管理者認証と再起動は私に依頼する
+- 再起動が必要な更新後は「Meetron Setup.command」または./scripts/setup-meetron.shを実行する
 - ChromeのMeetron Controlsを再読み込みし、必要な場合だけ同じextensionフォルダを読み込み直す
 - ./scripts/check-env.shとローカルテストの後、機密情報を含まないGoogle Meetで双方向音声を確認する
 
@@ -209,18 +249,34 @@ AIアシスタントまたはターミナルから同じ処理を行う場合は
 
 ドライバの導入では管理者認証が必要です。導入後にmacOSからログアウトするか再起動し、`./scripts/check-env.sh`で2つのデバイスを確認します。ローカル開発だけでCore Audioを即時再起動する場合は`--restart-audio`を使えます。
 
-### MeetコントロールUI
+### 会議コントロールUI
 
-Google Meet上へ常駐する開発版Chrome拡張とNative Messaging Hostを設定します。
+Google Meet／Zoom上へ常駐する開発版Chrome拡張とNative Messaging Hostを設定します。
 
 ```bash
-npm install
+npm ci
 ./scripts/install-control-ui.sh
 ```
 
 普段使うChromeでデベロッパーモードを有効にし、`extension`ディレクトリを「パッケージ化されていない拡張機能」として読み込みます。初期セットアップから、MeetとChatGPTで共用する専用Chromeを開き、同じ拡張をそちらにも一度読み込みます。Chrome公式ビルドでは開発版拡張をコマンドだけで読み込めないため、このディレクトリ選択だけは手動です。
 
-普段使うChromeで拡張を開くと、音声デバイス、ChatGPT Project、専用Chromeを順に確認する初期セットアップが表示されます。完了後はMeet URLを入力して`開始`を押すだけで、音声経路の設定、ChatGPT Voiceの起動、GPT参加者のMeet参加、マイク解除までをバックグラウンドで実行します。通常ChromeのMeet上に出るパネルは専用ChromeのGPT参加者だけを操作し、ユーザー本人のMeetマイクには触れません。
+普段使うChromeで拡張を開くと、音声デバイス、ChatGPT Project、専用Chromeを順に確認する初期セットアップが表示されます。完了後はGoogle Meet／Zoomを選ぶか、会議URLをそのまま貼り付けます。URLからサービスを自動判定し、Google Meetは参加とマイク解除まで、Zoomはブラウザ参加、音声設定、参加要求まで自動で実行します。通常Chromeの会議ページ上に出るパネルは専用ChromeのGPT参加者だけを操作し、ユーザー本人の会議マイクには触れません。
+
+### Zoom Web App（任意・ベータ）
+
+拡張ポップアップで`Zoom`を選ぶか、`https://...zoom.us/j/...`形式の招待URLを貼り付けて`開始`します。Zoom URLを貼り付けた場合は自動でZoomへ切り替わります。
+
+`開始`すると、専用Chromeで次を自動実行します。
+
+1. `ブラウザから参加`へ進む
+2. 表示名を`GPT-Live`にする
+3. マイクを`Meetron: AI to Meeting`、スピーカーを`Meetron: Meeting to AI`へ固定する
+4. カメラをオフ、マイクをミュートにする
+5. 音声経路とミュートを検証してから参加を要求する
+
+待機室が有効な会議では、ホストの承認だけ手動です。カメラが接続されていない旨の通知は、カメラを使わないため参加の妨げになりません。自動検出が失敗した場合だけ、ポップアップのスタートガイドに従って同じ設定を確認してください。Zoomは日本語と英語が混在する場合があるため、Meetronは表示文言だけでなく、安定した要素ID、操作状態、音声トラックを組み合わせて判定します。
+
+Zoomホストがブラウザ参加を無効にしている会議では利用できません。招待URLの`pwd`は自動参加にだけ利用し、ログ、実行状態、Chrome拡張ストレージ、長時間起動するChromeのプロセス引数には保存しません。URLに正しい`pwd`が含まれていれば、利用者によるパスコード入力は不要です。Zoomの公式手順は[ブラウザから会議へ参加する方法](https://support.zoom.com/hc/en/article?cms_guid=false&id=zm_kb&lang=en-US&sysparm_article=KB0060732)を参照してください。
 
 ```bash
 ./scripts/open-gpt-participant.sh "https://meet.google.com/xxx-yyyy-zzz"
@@ -229,7 +285,7 @@ npm install
 Google Meetのマイク権限、初回案内、表示名、専用音声デバイス、参加前ミュートを自動設定する場合:
 
 ```bash
-npm install
+npm ci
 ./scripts/open-gpt-participant.sh --auto-prepare --restart-profile \
   "https://meet.google.com/xxx-yyyy-zzz"
 ```
@@ -244,18 +300,18 @@ ChatGPTの`Meetron` Projectで毎回新しいチャットを作成し、Voiceを
 
 初回だけ、Meetと共用する専用ChromeでChatGPTへログインし、同じコマンドを再実行します。Project URLはローカル専用の`.meeting-copilot.env`へ保存し、リポジトリ配布には含めません。専用Chrome内のChatGPT Voice入力を`Meetron: Meeting to AI`、Voice出力を`Meetron: AI to Meeting`へ固定します。macOSのシステム既定入力・出力は変更しません。
 
-ChatGPT Voiceを開始し、Meetの参加リクエストまでまとめて実行する場合:
+ChatGPT Voiceを開始し、会議への参加リクエストまでまとめて実行する場合:
 
 ```bash
 ./scripts/start-meetron.sh \
   "https://meet.google.com/xxx-yyyy-zzz"
 ```
 
-統合起動では、同じ専用Chromeの別タブでChatGPT VoiceとMeetを開き、入室後に会議マイクも自動解除します。Voice再起動はChatGPTタブだけを作り直すため、Meet参加状態を維持します。低レベルの`open-gpt-participant.sh --join`だけを実行した場合はミュートのままです。`--join`を使う場合は専用ChromeでGoogleへ一度ログインしてください。
+統合起動では、同じ専用Chromeの別タブでChatGPT Voiceと会議ページを開き、入室後に会議マイクも自動解除します。Voice再起動はChatGPTタブだけを作り直すため、会議参加状態を維持します。低レベルの`open-gpt-participant.sh --join`だけを実行した場合はミュートのままです。Google Meetで`--join`を使う場合は専用ChromeでGoogleへ一度ログインしてください。
 
 参加ボタン表示後の固定待機は既定で2秒です。必要な場合は`MEETING_COPILOT_JOIN_DELAY`で調整できます。MeetのUIからマイクボタンを検出できない場合は、標準ショートカットへ自動的にフォールバックします。カメラ状態を安全に判定できないUIでは参加ボタンを自動で押さず、専用Chromeを前面に残すので、カメラをオフにして手動参加してください。
 
-会議中にGPT参加者のマイクをローカルから制御する場合:
+会議中にGPT参加者のマイクをローカルから制御する場合、互換用の旧ファイル名を維持している次のコマンドを使います。現在アクティブなGoogle Meet／Zoom参加者を自動判定して操作します。
 
 ```bash
 ./scripts/set-meet-mic.sh mute
@@ -263,7 +319,7 @@ ChatGPT Voiceを開始し、Meetの参加リクエストまでまとめて実行
 ./scripts/set-meet-mic.sh toggle
 ```
 
-常駐パネルの`セッション終了`は、GPT参加者のミュート、ChatGPT Voice停止、Meet退出、専用Meetタブの終了をまとめて実行します。旧版が変更したmacOS音声設定の復旧データが残っている場合は、次のコマンドで一度だけ復元できます。
+常駐パネルの`セッション終了`は、GPT参加者のミュート、ChatGPT Voice停止、会議退出、専用会議タブの終了をまとめて実行します。旧版が変更したmacOS音声設定の復旧データが残っている場合は、次のコマンドで一度だけ復元できます。
 
 ```bash
 ./scripts/restore-audio.sh
@@ -275,19 +331,17 @@ ChatGPT側にはREADMEのProject instructionsを設定し、最初は機密情�
 
 ## 公開版Meeting Copilotからの更新
 
-旧公開版を利用中の場合も、ローカル設定や専用Chromeを削除せず、そのまま更新します。
+旧公開版を利用中の場合も、ローカル設定や専用Chromeを削除せず、そのまま更新できます。新しい配布フォルダ内の`Meetron Update.command`を開くか、そのフォルダのターミナルから`./scripts/update-meetron.sh`を実行してください。
 
-1. ローカル変更がないことを確認して最新版を取得する
-2. GitHub Releasesの`MeetronAudio-*.pkg`を検証してインストールする
-3. Macを再起動する
-4. `Meetron Setup.command`を実行する
-5. `chrome://extensions`でMeetron Controlsを再読み込みする
-6. `./scripts/check-env.sh`で`Meetron Audio`が選択されていることを確認する
-7. 機密情報を含まないテスト会議で確認する
+1. GitHubから最新ソースをcloneするか、`Code` > `Download ZIP`で取得して任意の場所へ展開する
+2. `Meetron Update.command`を開く。Gatekeeperに止められた場合は[`.command`が開けない場合](#commandが開けない場合)に従うか、ターミナルから`./scripts/update-meetron.sh`を実行する
+3. Meetron Audioの更新を案内された場合だけ、macOSインストーラを完了してMacを再起動する
+4. BlackHoleを継続する場合は、案内に従ってGoogle Chromeを終了して再度開く
+5. 機密情報を含まないテスト会議で確認する
 
 `.meeting-copilot.env`、`.meeting-copilot-runtime`、`~/Library/Application Support/MeetingCopilot`、`MEETING_COPILOT_*`環境変数、Native Messaging Host IDは既存ユーザーとの互換性のため当面維持します。これらは内部識別子であり、画面上の製品名はMeetronです。
 
-BlackHoleを導入済みでも削除する必要はありません。MeetronはBlackHoleを自動削除・更新せず、音声設定も変更しません。移行リリースではMeetron Audioが利用できない場合に限って旧経路を互換フォールバックとして検出します。新規ユーザーがBlackHoleを導入する必要はありません。
+BlackHoleを導入済みでも削除する必要はありません。更新プログラムはBlackHole 2ch / 16chが現在の正常なバックエンドであることを確認すると、Meetron Audio PKGを要求せずそのまま維持します。MeetronはBlackHoleを自動削除・更新せず、macOSの音声設定も変更しません。新規ユーザーがBlackHoleを導入する必要はありません。
 
 ## アンインストール
 
@@ -330,9 +384,18 @@ npm run test:package
 
 公開用PKGはDeveloper IDとApple公証の設定後、`npm run package:audio:release`で`dist/release/`へ生成します。この処理は公証設定がなければ停止し、既存の公証済みPKGを上書きしません。
 
+Community配布ZIPは、クリーンなリリースコミットから次のように生成します。音声PKGを指定すると、署名・公証済みPKGとチェックサムも同梱します。
+
+```bash
+npm run package:community -- \
+  --audio-pkg dist/release/MeetronAudio-AUDIO_VERSION.pkg
+```
+
+完全な公開手順と別Macでの検証項目は[RELEASING.md](RELEASING.md)にあります。
+
 PKGをインストールして利用するだけのユーザーは、これらの開発者テストを実行する必要はありません。`./scripts/setup-meetron.sh --check-only`と`./scripts/check-env.sh`を使ってください。
 
-不具合報告では、macOSとChromeのバージョン、再現手順、`.meeting-copilot-runtime/meeting-launch.log`からアカウント情報や会議URLを除いた内容を[Issue](https://github.com/bb8ad8/meetron/issues)へ添えてください。修正提案は[CONTRIBUTING.md](CONTRIBUTING.md)に従ってください。セキュリティ上の問題は公開Issueへ書かず、[SECURITY.md](SECURITY.md)の連絡方法を利用してください。
+不具合報告では、[SUPPORT.md](SUPPORT.md)を確認し、macOSとChromeのバージョン、再現手順、`.meeting-copilot-runtime/meeting-launch.log`からアカウント情報や会議URLを除いた内容を[Issue](https://github.com/bb8ad8/meetron/issues)へ添えてください。修正提案は[CONTRIBUTING.md](CONTRIBUTING.md)に従ってください。セキュリティ上の問題は公開Issueへ書かず、[SECURITY.md](SECURITY.md)の連絡方法を利用してください。
 
 ## 配布上の注意
 

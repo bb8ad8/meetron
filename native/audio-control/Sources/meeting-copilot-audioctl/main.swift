@@ -19,8 +19,11 @@ struct InstallStatus: Codable {
 struct RoutingVerification: Codable {
     let ready: Bool
     let defaultInputUID: String?
+    let defaultOutputUID: String?
     let meetingToAIInstalled: Bool
     let aiToMeetingInstalled: Bool
+    let meetronIsDefaultInput: Bool
+    let meetronIsDefaultOutput: Bool
 }
 
 let meetingToAIUID = "io.github.bb8ad8.meetron.audio.meeting-to-ai.device"
@@ -36,7 +39,7 @@ func usage() {
       get-default-input              Print the current default input as JSON
       set-default-input --uid UID    Change the macOS default input
       set-default-output --uid UID   Change the macOS default output
-      verify-routing                 Verify the custom devices and default input
+      verify-routing                 Verify the custom devices without changing system defaults
       version                        Print the helper protocol version
     """)
 }
@@ -85,10 +88,13 @@ do {
         let meetingToAIInstalled = AudioDeviceManager.device(withUID: meetingToAIUID, in: status.devices) != nil
         let aiToMeetingInstalled = AudioDeviceManager.device(withUID: aiToMeetingUID, in: status.devices) != nil
         data = try encoder.encode(RoutingVerification(
-            ready: meetingToAIInstalled && aiToMeetingInstalled && status.input?.uid == meetingToAIUID,
+            ready: meetingToAIInstalled && aiToMeetingInstalled,
             defaultInputUID: status.input?.uid,
+            defaultOutputUID: status.output?.uid,
             meetingToAIInstalled: meetingToAIInstalled,
-            aiToMeetingInstalled: aiToMeetingInstalled
+            aiToMeetingInstalled: aiToMeetingInstalled,
+            meetronIsDefaultInput: status.input.map { [meetingToAIUID, aiToMeetingUID].contains($0.uid) } ?? false,
+            meetronIsDefaultOutput: status.output.map { [meetingToAIUID, aiToMeetingUID].contains($0.uid) } ?? false
         ))
     case "version":
         data = try encoder.encode(["version": meetronAudioControlVersion])
