@@ -1,7 +1,7 @@
 (() => {
   const HOST_ID = "meeting-copilot-controls-root";
   const MEET_PATH = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:[/?#]|$)/i;
-  const ZOOM_PATH = /^\/wc\/\d+\/(?:join|start)(?:[/?#]|$)/i;
+  const ZOOM_PATH = /^\/wc\/(?:(?:join|start)\/\d+|\d+\/(?:join|start))(?:[/?#]|$)/i;
   const hostname = window.location.hostname.toLowerCase();
   const isMeetPage = hostname === "meet.google.com" && MEET_PATH.test(window.location.pathname);
   const isZoomPage =

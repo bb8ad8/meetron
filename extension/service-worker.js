@@ -38,7 +38,7 @@ function senderMayRequest(sender, requestType) {
   const isZoom =
     url.protocol === "https:" &&
     (url.hostname === "zoom.us" || url.hostname.endsWith(".zoom.us")) &&
-    /^\/wc\/\d+\/(?:join|start)(?:\/)?$/i.test(url.pathname);
+    /^\/wc\/(?:(?:join|start)\/\d+|\d+\/(?:join|start))(?:\/)?$/i.test(url.pathname);
   return (isMeet || isZoom) && CONTENT_REQUESTS.has(requestType);
 }
 

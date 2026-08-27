@@ -690,8 +690,28 @@ if (
   throw new Error(`Zoom launch progress looked disconnected: ${JSON.stringify(launchingPanel)}`);
 }
 await zoomPage.evaluate(() => { globalThis.__launchInProgress = false; });
+
+const zoomSpaPage = await context.newPage();
+await zoomSpaPage.goto("https://app.zoom.us/wc/join/12345678901");
+await zoomSpaPage.evaluate(() => { globalThis.__activeProvider = "zoom-web"; });
+await zoomSpaPage.evaluate(script);
+await zoomSpaPage.waitForTimeout(100);
+const zoomSpaInitialPanel = await zoomSpaPage.locator("#meeting-copilot-controls-root").count();
+await zoomSpaPage.evaluate(() => {
+  history.replaceState({}, "", "/wc/12345678901/join");
+});
+const zoomSpaRewrittenPanel = await zoomSpaPage.locator("#meeting-copilot-controls-root").count();
+if (zoomSpaInitialPanel !== 1 || zoomSpaRewrittenPanel !== 1) {
+  throw new Error(
+    `Zoom SPA path rewrite lost persistent controls: ${JSON.stringify({
+      zoomSpaInitialPanel,
+      zoomSpaRewrittenPanel,
+    })}`,
+  );
+}
+
 const dedicatedZoomPage = await context.newPage();
-await dedicatedZoomPage.goto("https://app.zoom.us/wc/12345678901/join");
+await dedicatedZoomPage.goto("https://app.zoom.us/wc/join/12345678901");
 await dedicatedZoomPage.evaluate(() => {
   document.documentElement.setAttribute("data-meetron-dedicated-participant", "true");
 });

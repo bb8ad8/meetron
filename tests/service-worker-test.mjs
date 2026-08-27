@@ -105,7 +105,7 @@ const zoomScreenshotAsynchronous = messageListener(
   },
   {
     id: chrome.runtime.id,
-    url: "https://app.zoom.us/wc/12345678901/join",
+    url: "https://app.zoom.us/wc/join/12345678901",
   },
   (value) => { zoomScreenshotResponse = value; },
 );
@@ -123,7 +123,7 @@ const zoomAsynchronous = messageListener(
   },
   {
     id: chrome.runtime.id,
-    url: "https://app.zoom.us/wc/12345678901/join",
+    url: "https://app.zoom.us/wc/join/12345678901",
   },
   (value) => { zoomResponse = value; },
 );

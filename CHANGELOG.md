@@ -5,6 +5,10 @@ user-visible changes; implementation-only refactors stay in Git history.
 
 ## [Unreleased]
 
+### Fixed
+
+- Zoom Webが`/wc/join/<会議ID>`から同一ページ内でURLを書き換える場合も、常駐操作パネルを表示してNative Host操作を許可。
+
 ## [0.10.1] - 2026-08-27
 
 ### Changed
