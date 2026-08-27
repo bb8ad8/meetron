@@ -14,6 +14,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const currentVersion = JSON.parse(
+  readFileSync(resolve(repoRoot, "package.json"), "utf8"),
+).version;
 const temporaryDir = mkdtempSync(resolve(tmpdir(), "meetron-updater-test-"));
 const targetRoot = resolve(temporaryDir, "legacy-installation");
 const backupRoot = resolve(temporaryDir, "backups");
@@ -81,10 +84,13 @@ try {
   assert.equal(blackHoleUpdate.status, 0, blackHoleUpdate.stderr || blackHoleUpdate.stdout);
   assert.match(blackHoleUpdate.stdout, /Keeping the compatible blackhole audio backend/);
   assert.match(blackHoleUpdate.stdout, /planned action: legacy/);
-  assert.equal(JSON.parse(readFileSync(resolve(targetRoot, "package.json"), "utf8")).version, "0.10.0");
+  assert.equal(
+    JSON.parse(readFileSync(resolve(targetRoot, "package.json"), "utf8")).version,
+    currentVersion,
+  );
   assert.equal(
     JSON.parse(readFileSync(resolve(targetRoot, "extension/manifest.json"), "utf8")).version,
-    "0.10.0",
+    currentVersion,
   );
   assert.match(readFileSync(resolve(targetRoot, ".meeting-copilot.env"), "utf8"), /g-p-test/);
   assert.equal(

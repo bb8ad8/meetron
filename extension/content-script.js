@@ -43,6 +43,7 @@
 
   const iconPaths = {
     activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
     image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
     chevronDown: '<path d="m6 9 6 6 6-6"/>',
     chevronUp: '<path d="m18 15-6-6-6 6"/>',
@@ -75,6 +76,8 @@
       [hidden] { display: none !important; }
       button { font: inherit; }
       .panel {
+        position: relative;
+        z-index: 2;
         width: 304px;
         color: #202124;
         background: #fff;
@@ -131,6 +134,150 @@
       .command.primary:hover { background: #1765cc; }
       .command.wide { grid-column: 1 / -1; }
       .command:disabled { opacity: .55; cursor: default; }
+      .screenshot-command {
+        position: relative;
+        isolation: isolate;
+        overflow: hidden;
+        transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease,
+          transform .2s ease;
+      }
+      .screenshot-command > :not(.screenshot-beam):not(.screenshot-particles) {
+        position: relative;
+        z-index: 2;
+      }
+      .screenshot-command .screenshot-icon { display: grid; place-items: center; }
+      .screenshot-beam {
+        position: absolute;
+        z-index: 1;
+        inset: -100% auto -100% -45%;
+        width: 34%;
+        opacity: 0;
+        transform: rotate(16deg);
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .8), transparent);
+        pointer-events: none;
+      }
+      .screenshot-command.is-processing,
+      .screenshot-command.is-processing:hover {
+        opacity: 1;
+        border-color: #65b5ff;
+        background: linear-gradient(110deg, #155dc0, #1a73e8 55%, #4f8eff);
+        box-shadow: 0 0 0 3px rgba(26, 115, 232, .16), 0 6px 16px rgba(26, 115, 232, .28);
+      }
+      .screenshot-command.is-processing .screenshot-icon { animation: screenshot-icon-pulse 1s ease-in-out infinite; }
+      .screenshot-command.is-processing .screenshot-beam {
+        opacity: 1;
+        animation: screenshot-beam 1.05s ease-in-out infinite;
+      }
+      .screenshot-command.is-success,
+      .screenshot-command.is-success:hover {
+        opacity: 1;
+        border-color: #13a878;
+        background: linear-gradient(110deg, #087f5b, #13a878 58%, #2bc792);
+        box-shadow: 0 0 0 3px rgba(19, 168, 120, .18), 0 6px 18px rgba(8, 127, 91, .3);
+        transform: translateY(-1px);
+      }
+      .screenshot-command.is-success .screenshot-icon { animation: screenshot-check-pop .45s cubic-bezier(.2, .9, .3, 1.4); }
+      .screenshot-command.is-error,
+      .screenshot-command.is-error:hover {
+        opacity: 1;
+        border-color: #d93025;
+        background: #b3261e;
+        box-shadow: 0 0 0 3px rgba(217, 48, 37, .16);
+        animation: screenshot-error-shake .35s ease-in-out;
+      }
+      .screenshot-particles { position: absolute; z-index: 3; inset: 50% auto auto 29px; pointer-events: none; }
+      .screenshot-particles i {
+        position: absolute;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        opacity: 0;
+        background: #b9ffe8;
+      }
+      .screenshot-command.is-success .screenshot-particles i { animation: screenshot-particle .65s ease-out both; }
+      .screenshot-particles i:nth-child(1) { --particle-x: -14px; --particle-y: -12px; }
+      .screenshot-particles i:nth-child(2) { --particle-x: 1px; --particle-y: -17px; animation-delay: .04s !important; }
+      .screenshot-particles i:nth-child(3) { --particle-x: 15px; --particle-y: -9px; animation-delay: .08s !important; }
+      .screenshot-particles i:nth-child(4) { --particle-x: 14px; --particle-y: 11px; animation-delay: .02s !important; }
+      .capture-effect {
+        position: fixed;
+        z-index: 1;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .capture-flash {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        border: 0 solid rgba(171, 222, 255, .95);
+        background: rgba(226, 245, 255, 0);
+      }
+      .capture-effect[data-visual-state="capturing"] .capture-flash {
+        animation: capture-flash .48s ease-out both;
+      }
+      .capture-toast {
+        position: absolute;
+        top: 36px;
+        left: 50%;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 10px 16px 10px 11px;
+        border: 1px solid rgba(126, 242, 202, .45);
+        border-radius: 999px;
+        color: #f2fff9;
+        background: rgba(12, 86, 65, .94);
+        box-shadow: 0 10px 34px rgba(0, 0, 0, .3), 0 0 22px rgba(43, 199, 146, .2);
+        font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        opacity: 0;
+        transform: translate(-50%, -14px) scale(.96);
+      }
+      .capture-toast-mark {
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        color: #087f5b;
+        background: #b9ffe8;
+      }
+      .capture-effect[data-visual-state="success"] .capture-toast {
+        animation: capture-toast 1.55s cubic-bezier(.2, .8, .2, 1) both;
+      }
+      @keyframes capture-flash {
+        0% { opacity: 0; border-width: 0; background-color: rgba(226, 245, 255, 0); }
+        16% { opacity: 1; border-width: 7px; background-color: rgba(226, 245, 255, .22); }
+        100% { opacity: 0; border-width: 2px; background-color: rgba(226, 245, 255, 0); }
+      }
+      @keyframes capture-toast {
+        0% { opacity: 0; transform: translate(-50%, -14px) scale(.96); }
+        18%, 72% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -5px) scale(.98); }
+      }
+      @keyframes screenshot-beam {
+        0% { left: -45%; }
+        65%, 100% { left: 115%; }
+      }
+      @keyframes screenshot-icon-pulse {
+        0%, 100% { transform: scale(1); opacity: .85; }
+        50% { transform: scale(1.1); opacity: 1; }
+      }
+      @keyframes screenshot-check-pop {
+        0% { transform: scale(.5) rotate(-12deg); }
+        70% { transform: scale(1.2) rotate(3deg); }
+        100% { transform: scale(1) rotate(0); }
+      }
+      @keyframes screenshot-particle {
+        0% { opacity: 0; transform: translate(0, 0) scale(.4); }
+        25% { opacity: 1; }
+        100% { opacity: 0; transform: translate(var(--particle-x), var(--particle-y)) scale(1); }
+      }
+      @keyframes screenshot-error-shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-3px); }
+        75% { transform: translateX(3px); }
+      }
       .footer { margin-top: 9px; display: flex; align-items: center; gap: 6px; min-height: 22px; }
       .message { flex: 1; color: #5f6368; font-size: 11px; overflow-wrap: anywhere; }
       .message.error { color: #c5221f; }
@@ -141,7 +288,26 @@
         .icon-button:hover, .command:hover { background: #3c4043; }
         .command { color: #e8eaed; background: #292a2d; border-color: #5f6368; }
       }
+      @media (prefers-reduced-motion: reduce) {
+        .capture-flash, .capture-toast, .screenshot-command, .screenshot-icon,
+        .screenshot-beam, .screenshot-particles i { animation: none !important; transition: none !important; }
+        .capture-effect[data-visual-state="capturing"] .capture-flash {
+          opacity: .18;
+          border: 3px solid rgba(171, 222, 255, .9);
+        }
+        .capture-effect[data-visual-state="success"] .capture-toast {
+          opacity: 1;
+          transform: translate(-50%, 0);
+        }
+      }
     </style>
+    <div class="capture-effect" data-capture-effect data-visual-state="idle" aria-hidden="true">
+      <div class="capture-flash"></div>
+      <div class="capture-toast">
+        <span class="capture-toast-mark">${icon("check", 15)}</span>
+        <span>GPTへ送信完了</span>
+      </div>
+    </div>
     <section class="panel" aria-label="Meetron controls">
       <header class="header">
         <div class="brand">
@@ -161,7 +327,12 @@
         </div>
         <div class="section-title">操作</div>
         <div class="actions">
-          <button class="command primary wide" data-screenshot type="button">${icon("image")}<span>GPTに画面を送る</span></button>
+          <button class="command primary wide screenshot-command" data-screenshot data-visual-state="idle" type="button" aria-label="GPTに画面を送る">
+            <span class="screenshot-icon" data-screenshot-icon>${icon("image")}</span>
+            <span data-screenshot-label>GPTに画面を送る</span>
+            <span class="screenshot-beam" aria-hidden="true"></span>
+            <span class="screenshot-particles" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          </button>
           <button class="command primary" data-mic type="button">${icon("micOff")}<span>ミュート解除</span></button>
           <button class="command" data-restart type="button">${icon("rotate")}<span>Voice再起動</span></button>
           <button class="command" data-stop type="button">${icon("square")}<span>セッション終了</span></button>
@@ -182,6 +353,9 @@
     expand: shadow.querySelector("[data-expand]"),
     micQuick: shadow.querySelector("[data-mic-quick]"),
     screenshot: shadow.querySelector("[data-screenshot]"),
+    screenshotIcon: shadow.querySelector("[data-screenshot-icon]"),
+    screenshotLabel: shadow.querySelector("[data-screenshot-label]"),
+    captureEffect: shadow.querySelector("[data-capture-effect]"),
     mic: shadow.querySelector("[data-mic]"),
     restart: shadow.querySelector("[data-restart]"),
     stop: shadow.querySelector("[data-stop]"),
@@ -197,6 +371,56 @@
   let busy = false;
   let microphoneOverride = null;
   let participantMeetingKey = "";
+  let screenshotPhaseTimer = null;
+  let screenshotResetTimer = null;
+
+  const screenshotVisuals = {
+    idle: { label: "GPTに画面を送る", icon: "image" },
+    capturing: { label: "画面を撮影中…", icon: "image" },
+    sending: { label: "GPTへ送信中…", icon: "image" },
+    success: { label: "GPTへ送信完了", icon: "check" },
+    error: { label: "送信に失敗", icon: "image" },
+  };
+
+  function clearScreenshotTimers() {
+    window.clearTimeout(screenshotPhaseTimer);
+    window.clearTimeout(screenshotResetTimer);
+    screenshotPhaseTimer = null;
+    screenshotResetTimer = null;
+  }
+
+  function setScreenshotVisualState(state) {
+    const visual = screenshotVisuals[state] || screenshotVisuals.idle;
+    elements.screenshot.dataset.visualState = state;
+    elements.captureEffect.dataset.visualState = state;
+    elements.screenshot.classList.toggle("is-processing", ["capturing", "sending"].includes(state));
+    elements.screenshot.classList.toggle("is-success", state === "success");
+    elements.screenshot.classList.toggle("is-error", state === "error");
+    elements.screenshotIcon.innerHTML = icon(visual.icon);
+    elements.screenshotLabel.textContent = visual.label;
+    elements.screenshot.setAttribute("aria-label", visual.label);
+  }
+
+  function beginScreenshotVisuals() {
+    clearScreenshotTimers();
+    setScreenshotVisualState("idle");
+    // Resetting the state before layout ensures repeated captures replay the effect.
+    void elements.captureEffect.offsetWidth;
+    setScreenshotVisualState("capturing");
+    screenshotPhaseTimer = window.setTimeout(() => {
+      if (busy) setScreenshotVisualState("sending");
+    }, 480);
+  }
+
+  function finishScreenshotVisuals(state) {
+    window.clearTimeout(screenshotPhaseTimer);
+    screenshotPhaseTimer = null;
+    setScreenshotVisualState(state);
+    screenshotResetTimer = window.setTimeout(() => {
+      setScreenshotVisualState("idle");
+      screenshotResetTimer = null;
+    }, state === "success" ? 1_600 : 1_300);
+  }
 
   function meetingKey(value) {
     try {
@@ -524,6 +748,7 @@
 
   async function sendScreenshot() {
     busy = true;
+    beginScreenshotVisuals();
     setMessage("現在の画面をChatGPTへ送信しています");
     render();
     try {
@@ -534,10 +759,12 @@
       const dimensions = Number.isFinite(result?.width) && Number.isFinite(result?.height)
         ? `${result.width}×${result.height}`
         : "画面";
+      finishScreenshotVisuals("success");
       setMessage(`ChatGPTへ送信しました（${dimensions} / ${size}）`);
     } catch (error) {
       const stage = error?.details?.stage;
       const diagnostic = [error?.code, stage].filter(Boolean).join(" / ");
+      finishScreenshotVisuals("error");
       setMessage(`${error.message}${diagnostic ? `（${diagnostic}）` : ""}`, true);
     } finally {
       busy = false;

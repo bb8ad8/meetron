@@ -5,6 +5,12 @@ user-visible changes; implementation-only refactors stay in Git history.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-27
+
+### Changed
+
+- 会議画面の送信時に、撮影・送信中・完了・失敗を見分けられるシャッター／ステータスエフェクトを追加し、視差軽減設定にも対応。
+
 ## [0.10.0] - 2026-08-27
 
 ### Added
@@ -81,7 +87,8 @@ user-visible changes; implementation-only refactors stay in Git history.
 - Initial self-hosted Meetron Audio driver and native Core Audio controller.
 - Required aggregate CI check for supported macOS runners.
 
-[Unreleased]: https://github.com/bb8ad8/meetron/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/bb8ad8/meetron/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/bb8ad8/meetron/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/bb8ad8/meetron/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/bb8ad8/meetron/releases/tag/v0.9.0
 [0.8.1]: https://github.com/bb8ad8/meetron/releases/tag/v0.8.1

@@ -19,6 +19,7 @@ await context.addInitScript(() => {
   globalThis.__microphoneFailure = false;
   globalThis.__microphoneLateSuccess = false;
   globalThis.__statusFailureOnce = false;
+  globalThis.__screenshotDelayMs = 0;
   globalThis.chrome = {
     runtime: {
       id: "jlikakgdldiihhflkobhnpfegjlcakdd",
@@ -89,6 +90,9 @@ await context.addInitScript(() => {
           };
         }
         if (request.type === "visual-context.screenshot.send") {
+          if (globalThis.__screenshotDelayMs) {
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, globalThis.__screenshotDelayMs));
+          }
           if (globalThis.__screenshotFailure) {
             return {
               ok: false,
@@ -344,23 +348,68 @@ if (
   throw new Error("An untrusted screenshot click reached the Native Host.");
 }
 
+await page.evaluate(() => { globalThis.__screenshotDelayMs = 700; });
 await page.locator("#meeting-copilot-controls-root [data-screenshot]").click();
+const captureVisual = await page.evaluate(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  const button = root?.querySelector("[data-screenshot]");
+  return {
+    buttonState: button?.dataset.visualState,
+    effectState: root?.querySelector("[data-capture-effect]")?.dataset.visualState,
+    label: root?.querySelector("[data-screenshot-label]")?.textContent,
+    processing: button?.classList.contains("is-processing"),
+    disabled: button?.disabled,
+  };
+});
+if (
+  captureVisual.buttonState !== "capturing" ||
+  captureVisual.effectState !== "capturing" ||
+  captureVisual.label !== "画面を撮影中…" ||
+  !captureVisual.processing ||
+  !captureVisual.disabled
+) {
+  throw new Error(`Screenshot capture effect did not start: ${JSON.stringify(captureVisual)}`);
+}
+await page.waitForFunction(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  return (
+    root?.querySelector("[data-screenshot]")?.dataset.visualState === "sending" &&
+    root?.querySelector("[data-screenshot-label]")?.textContent === "GPTへ送信中…"
+  );
+});
 await page.waitForFunction(() =>
   document
     .querySelector("#meeting-copilot-controls-root")
     ?.shadowRoot.querySelector("[data-message]")
     ?.textContent === "ChatGPTへ送信しました（1280×720 / 82 KB）",
 );
-const screenshotRequest = await page.evaluate(() =>
-  globalThis.__nativeRequests.filter(
-    (entry) => entry.type === "visual-context.screenshot.send",
-  ).length,
-);
-if (screenshotRequest !== 1) {
-  throw new Error(`Expected one trusted screenshot request, got ${screenshotRequest}.`);
+const screenshotSuccess = await page.evaluate(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  const button = root?.querySelector("[data-screenshot]");
+  return {
+    requests: globalThis.__nativeRequests.filter(
+      (entry) => entry.type === "visual-context.screenshot.send",
+    ).length,
+    buttonState: button?.dataset.visualState,
+    effectState: root?.querySelector("[data-capture-effect]")?.dataset.visualState,
+    label: root?.querySelector("[data-screenshot-label]")?.textContent,
+    success: button?.classList.contains("is-success"),
+  };
+});
+if (
+  screenshotSuccess.requests !== 1 ||
+  screenshotSuccess.buttonState !== "success" ||
+  screenshotSuccess.effectState !== "success" ||
+  screenshotSuccess.label !== "GPTへ送信完了" ||
+  !screenshotSuccess.success
+) {
+  throw new Error(`Screenshot success effect was incorrect: ${JSON.stringify(screenshotSuccess)}`);
 }
 
-await page.evaluate(() => { globalThis.__screenshotFailure = true; });
+await page.evaluate(() => {
+  globalThis.__screenshotDelayMs = 0;
+  globalThis.__screenshotFailure = true;
+});
 await page.locator("#meeting-copilot-controls-root [data-screenshot]").click();
 await page.waitForFunction(() =>
   document
@@ -368,7 +417,30 @@ await page.waitForFunction(() =>
     ?.shadowRoot.querySelector("[data-message]")
     ?.textContent.includes("CHATGPT_SEND_CONFIRM_TIMEOUT / sent-confirm"),
 );
+const screenshotFailure = await page.evaluate(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  const button = root?.querySelector("[data-screenshot]");
+  return {
+    state: button?.dataset.visualState,
+    label: root?.querySelector("[data-screenshot-label]")?.textContent,
+    error: button?.classList.contains("is-error"),
+  };
+});
+if (
+  screenshotFailure.state !== "error" ||
+  screenshotFailure.label !== "送信に失敗" ||
+  !screenshotFailure.error
+) {
+  throw new Error(`Screenshot failure effect was incorrect: ${JSON.stringify(screenshotFailure)}`);
+}
 await page.evaluate(() => { globalThis.__screenshotFailure = false; });
+await page.waitForFunction(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  return (
+    root?.querySelector("[data-screenshot]")?.dataset.visualState === "idle" &&
+    root?.querySelector("[data-screenshot-label]")?.textContent === "GPTに画面を送る"
+  );
+});
 
 await page.evaluate(() => { globalThis.__voiceInactive = true; });
 await page.locator("#meeting-copilot-controls-root [data-refresh]").click();
@@ -589,11 +661,16 @@ if (
   throw new Error(`Zoom page did not receive the persistent controls: ${JSON.stringify(zoomPanel)}`);
 }
 await zoomPage.locator("#meeting-copilot-controls-root [data-screenshot]").click();
-await zoomPage.waitForFunction(() =>
-  globalThis.__nativeRequests.some(
-    (entry) => entry.type === "visual-context.screenshot.send",
-  ),
-);
+await zoomPage.waitForFunction(() => {
+  const root = document.querySelector("#meeting-copilot-controls-root")?.shadowRoot;
+  return (
+    globalThis.__nativeRequests.some(
+      (entry) => entry.type === "visual-context.screenshot.send",
+    ) &&
+    root?.querySelector("[data-screenshot]")?.dataset.visualState === "success" &&
+    root?.querySelector("[data-screenshot-label]")?.textContent === "GPTへ送信完了"
+  );
+});
 await zoomPage.evaluate(() => { globalThis.__launchInProgress = true; });
 await zoomPage.locator("#meeting-copilot-controls-root [data-refresh]").click();
 await zoomPage.waitForTimeout(100);
