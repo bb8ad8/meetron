@@ -38,6 +38,6 @@
     "test:package": "./native/audio-driver/test-package.sh"
   },
   "dependencies": {
-    "playwright-core": "1.62.1"
+    "playwright-core": "1.63.0"
   }
 }
