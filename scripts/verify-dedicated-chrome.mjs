@@ -26,7 +26,7 @@ if (!profileDir || !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65_
 }
 
 const { stdout: processList } = await execFileAsync("/bin/ps", ["-axo", "pid=,command="], {
-  timeout: 3_000,
+  timeout: 10_000,
 });
 const expectedProfileArgument = `--user-data-dir=${profileDir} --no-first-run`;
 const expectedPortArgument = `--remote-debugging-port=${port}`;
@@ -52,7 +52,7 @@ try {
   const { stdout } = await execFileAsync(
     "/usr/sbin/lsof",
     ["-nP", "-t", `-iTCP@127.0.0.1:${port}`, "-sTCP:LISTEN"],
-    { timeout: 3_000 },
+    { timeout: 10_000 },
   );
   listenerPids = stdout
     .split("\n")
@@ -70,7 +70,7 @@ if (!pid) {
 
 try {
   const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
-    signal: AbortSignal.timeout(3_000),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const version = await response.json();
