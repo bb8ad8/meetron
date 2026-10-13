@@ -1,7 +1,7 @@
 import { activateLocator, firstVisibleLocator } from "../browser/meeting-browser.mjs";
 import { MeetronError } from "../core/errors.mjs";
 
-const VOICE_END_NAME = /^(音声を終了する|End voice)$/i;
+const VOICE_END_NAME = /^(音声を終了(?:する)?|End voice)$/i;
 const VOICE_SETTINGS_NAME = /^(音声設定|Voice settings)$/i;
 const MICROPHONE_ON_NAME = /^(マイクをオフ(?:にする)?|マイクをミュート|Turn off microphone|Mute microphone)$/i;
 const SEND_NAME = /^(プロンプトを送信する|メッセージを送信する|Send prompt|Send message)$/i;

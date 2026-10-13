@@ -117,12 +117,12 @@ await page.waitForTimeout(500);
 
 async function selectAudioDevice({ buttonName, menuName, targetName }) {
   const button = page.getByRole("button", { name: buttonName }).first();
-  await button.waitFor({ state: "visible", timeout: 15_000 });
+  await button.waitFor({ state: "visible", timeout: 45_000 });
   let currentLabel = (await button.getAttribute("aria-label")) || "";
   if (!targetName.test(currentLabel)) {
-    await button.click();
+    await button.click({ force: true });
     const menu = page.getByRole("menu", { name: menuName });
-    await menu.getByRole("menuitemradio", { name: targetName }).click({ timeout: 5_000 });
+    await menu.getByRole("menuitemradio", { name: targetName }).click({ timeout: 5_000, force: true });
     for (let attempt = 0; attempt < 20; attempt += 1) {
       currentLabel = (await button.getAttribute("aria-label")) || "";
       if (targetName.test(currentLabel)) break;

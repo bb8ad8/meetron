@@ -59,6 +59,7 @@ try {
         @keyframes moving { from { transform: translateX(0); } to { transform: translateX(2px); } }
         #active-mic { animation: moving 50ms alternate infinite; }
       </style></head><body>
+        <button aria-label="Turn on camera" data-is-muted="true">Camera off</button>
         <button hidden aria-label="Turn off microphone" data-is-muted="false">Hidden duplicate</button>
         <button id="active-mic" aria-label="Turn off microphone" data-is-muted="false">Mic</button>
         <script>

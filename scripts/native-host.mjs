@@ -339,7 +339,7 @@ async function stopVoice() {
   }
 
   const endVoice = page.getByRole("button", {
-    name: /^(音声を終了する|End voice)$/i,
+    name: /^(音声を終了(?:する)?|End voice)$/i,
   });
   if ((await endVoice.count()) === 0 || !(await endVoice.first().isVisible())) {
     return { stopped: false, alreadyStopped: true };

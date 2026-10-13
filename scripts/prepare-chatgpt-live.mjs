@@ -407,13 +407,13 @@ if (loginRequired) {
 
 const newChat = page
   .getByRole("textbox", {
-    name: /内の新しいチャット|new chat in|ChatGPT とチャットする/i,
+    name: /内の新しいチャット|で新しいチャット|new chat in|ChatGPT とチャットする/i,
   })
   .first();
 await newChat.waitFor({ state: "visible", timeout: 20_000 });
 
 const startVoice = page.getByRole("button", {
-  name: /^(音声を開始する|Start voice)$/i,
+  name: /^(音声を開始する|音声会話を開始|Start voice)$/i,
 });
 await startVoice.waitFor({ state: "visible", timeout: 10_000 });
 let voiceStartAttempted = false;
@@ -424,10 +424,10 @@ let audioOutput;
 let internalAudioOutput;
 try {
   voiceStartAttempted = true;
-  await startVoice.click();
+  await startVoice.click({ force: true });
 
   endVoice = page.getByRole("button", {
-    name: /^(音声を終了する|End voice)$/i,
+    name: /^(音声を終了(?:する)?|End voice)$/i,
   });
   await endVoice.waitFor({ state: "visible", timeout: 30_000 });
 
@@ -439,7 +439,7 @@ try {
   await page.waitForFunction(() => {
     const state = globalThis.__meetingCopilotAudioRouting;
     return state?.inputRequests > 0 && state.inputTracks.length > 0;
-  }, undefined, { timeout: 5_000 });
+  }, undefined, { timeout: 5_000, polling: 100 });
   audioInput = await page.evaluate(() => {
     const state = globalThis.__meetingCopilotAudioRouting;
     if (!state) return { routed: false, error: "Audio routing was not initialized." };
@@ -514,7 +514,7 @@ try {
 } catch (error) {
   if (voiceStartAttempted && !page.isClosed()) {
     const stopButton = page.getByRole("button", {
-      name: /^(音声を終了する|End voice)$/i,
+      name: /^(音声を終了(?:する)?|End voice)$/i,
     });
     if ((await stopButton.count().catch(() => 0)) > 0) {
       await stopButton.first().click({ force: true, timeout: 5_000 }).catch(() => {});

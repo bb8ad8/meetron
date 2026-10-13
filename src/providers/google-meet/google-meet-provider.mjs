@@ -105,7 +105,9 @@ function googleMeetMicrophoneControls(page) {
 }
 
 export async function getGoogleMeetMicrophoneState(page) {
-  const stateControls = page.locator("[data-is-muted]");
+  const stateControls = page.locator(
+    '[data-is-muted][aria-label*="マイク"], [data-is-muted][aria-label*="microphone" i], [data-is-muted][data-tooltip*="マイク"], [data-is-muted][data-tooltip*="microphone" i]',
+  );
   try {
     const count = await stateControls.count();
     for (let index = 0; index < count; index += 1) {
